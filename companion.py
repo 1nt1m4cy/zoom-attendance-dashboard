@@ -460,8 +460,8 @@ def add_entry(raw_text):
             if mixed:
                 if grp and grp != MY_GROUP:
                     reason = f"not in Group {MY_GROUP} (Grp {grp})"
-                elif not grp and not sid:
-                    reason = "no group tag + no student ID"
+                elif not grp:
+                    reason = "no group tag" if sid else "no group tag + no student ID"
             else:
                 if not sid:
                     reason = "no student ID"
@@ -513,7 +513,7 @@ def _rebuild_lists():
                 elif v['group'] and v['group'] != MY_GROUP:
                     ignored.append({**v, 'reason': f"not in Group {MY_GROUP} (Grp {v['group']})"})
                 elif v['student_id']:
-                    collected.append(v)
+                    ignored.append({**v, 'reason': "no group tag"})
                 else:
                     ignored.append({**v, 'reason': "no group tag + no student ID"})
             else:
