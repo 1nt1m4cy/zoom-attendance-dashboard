@@ -1057,8 +1057,18 @@ TEMPLATE = r'''<!DOCTYPE html>
   --blue-bg:rgba(79,143,247,.06);
   --radius:10px;--radius-sm:6px;
 }
+:root[data-theme="light"]{
+  --bg:#f6f8fb;--bg2:#eef2f7;--card:#ffffff;--card-hover:#f3f5f9;
+  --border:#d9e0ea;--border-light:#c3cedc;
+  --text:#0f172a;--text2:#475569;--text3:#94a3b8;
+  --accent:#2563eb;--accent2:#1d4ed8;
+  --green:#16a34a;--green-bg:rgba(22,163,74,.08);
+  --red:#dc2626;--red-bg:rgba(220,38,38,.08);
+  --amber:#d97706;--amber-bg:rgba(217,119,6,.08);
+  --blue-bg:rgba(37,99,235,.06);
+}
 html{font-size:14px}
-body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden;transition:background .2s,color .2s}
 
 /* LANDING */
 #landing{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:var(--bg)}
@@ -1134,6 +1144,10 @@ tr:hover td{background:var(--card-hover)}
 .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.7rem;font-weight:600}
 .badge-green{background:var(--green-bg);color:var(--green)}
 .badge-red{background:var(--red-bg);color:var(--red)}
+.empty-row td{text-align:center;padding:36px 16px;color:var(--text3);font-size:.82rem}
+.theme-toggle{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--bg);color:var(--text2);cursor:pointer;font-size:.9rem;transition:border .2s,color .2s}
+.theme-toggle:hover{border-color:var(--accent);color:var(--accent)}
+.theme-toggle-fixed{position:fixed;top:18px;right:18px;z-index:200}
 
 /* ACTIVITY LOG */
 .log-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:24px}
@@ -1233,6 +1247,7 @@ tr:hover td{background:var(--card-hover)}
 
 <!-- LANDING -->
 <div id="landing">
+<button class="theme-toggle theme-toggle-fixed" id="theme-toggle-landing" onclick="toggleTheme()" title="Toggle dark/light theme">&#9728;</button>
 <div class="landing-wrap">
   <div class="landing-card">
     <h1>Attendance Companion</h1>
@@ -1336,6 +1351,7 @@ tr:hover td{background:var(--card-hover)}
     <div class="status-pill connecting" id="status-pill"><span class="dot pulse"></span><span id="status-text">Connecting</span></div>
   </div>
   <div class="topbar-right">
+    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" title="Toggle dark/light theme">&#9728;</button>
     <span class="timer" id="timer">00:00:00</span>
   </div>
 </div>
@@ -1443,6 +1459,34 @@ let rosterMode = false;
 let selectedClassMode = '';
 
 let rosterFilename = '';
+
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  const icon = t === 'light' ? '\u{1F319}' : '\u2600\uFE0F';
+  const btnTop = document.getElementById('theme-toggle');
+  const btnLanding = document.getElementById('theme-toggle-landing');
+  if (btnTop) btnTop.innerHTML = icon;
+  if (btnLanding) btnLanding.innerHTML = icon;
+  localStorage.setItem('zad-theme', t);
+}
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(cur === 'light' ? 'dark' : 'light');
+}
+applyTheme(localStorage.getItem('zad-theme') || 'dark');
+
+function setEmptyState(tbodyId, colspan, message){
+  const tb = document.getElementById(tbodyId);
+  if (!tb) return;
+  const existing = tb.querySelector('.empty-row');
+  const hasRows = tb.querySelectorAll('tr:not(.empty-row)').length > 0;
+  if (hasRows) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const tr = document.createElement('tr');
+  tr.className = 'empty-row';
+  tr.innerHTML = `<td colspan="${colspan}">${message}</td>`;
+  tb.appendChild(tr);
+}
 
 function selectClassMode(mode) {
   selectedClassMode = mode;
@@ -1602,6 +1646,8 @@ function startTracking() {
       document.getElementById('inp-zoom-pw').value = '';
       document.getElementById('landing').style.display = 'none';
       document.getElementById('dashboard').style.display = 'block';
+      setEmptyState('tbody-collected', 3, 'No one collected yet');
+      setEmptyState('tbody-ignored', 2, 'No ignored entries');
       if (rosterMode && rosterFilename) {
         fetch('/state').then(r2=>r2.json()).then(s=>{
           showDashRosterBanner(s.roster_filename || rosterFilename, s.roster_names || []);
@@ -1706,6 +1752,7 @@ function handleEvent(d) {
         tr.className = 'row-new';
         tr.innerHTML = `<td>${collectedRows.length}</td><td>${esc(d.name)}</td><td><span class="badge badge-green">${d.student_id ? esc(d.student_id) : 'N/A'}</span></td>`;
         tbody.appendChild(tr);
+        setEmptyState('tbody-collected', 3, 'No one collected yet');
       }
     } else {
       const exists = ignoredRows.find(r => r.name === d.name);
@@ -1716,6 +1763,7 @@ function handleEvent(d) {
         tr.className = 'row-new';
         tr.innerHTML = `<td>${esc(d.name)}</td><td><span class="badge badge-red">${esc(d.reason)}</span></td>`;
         tbody.appendChild(tr);
+        setEmptyState('tbody-ignored', 2, 'No ignored entries');
       }
     }
   }
@@ -1833,19 +1881,19 @@ function showToast(msg, type) {
 
 document.getElementById('search-collected').addEventListener('input', function(e){
   const q = e.target.value.toLowerCase();
-  document.querySelectorAll('#tbody-collected tr').forEach(r=>{
+  document.querySelectorAll('#tbody-collected tr:not(.empty-row)').forEach(r=>{
     r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
 document.getElementById('search-ignored').addEventListener('input', function(e){
   const q = e.target.value.toLowerCase();
-  document.querySelectorAll('#tbody-ignored tr').forEach(r=>{
+  document.querySelectorAll('#tbody-ignored tr:not(.empty-row)').forEach(r=>{
     r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
 document.getElementById('search-absent').addEventListener('input', function(e){
   const q = e.target.value.toLowerCase();
-  document.querySelectorAll('#tbody-absent tr').forEach(r=>{
+  document.querySelectorAll('#tbody-absent tr:not(.empty-row)').forEach(r=>{
     r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
@@ -1861,6 +1909,7 @@ function rebuildTables(coll, ign, abs) {
     tr.innerHTML = `<td>${i+1}</td><td>${esc(d.name)}</td><td><span class="badge badge-green">${d.student_id||'N/A'}</span></td>`;
     tc.appendChild(tr);
   });
+  setEmptyState('tbody-collected', 3, 'No one collected yet');
   const ti = document.getElementById('tbody-ignored');
   ti.innerHTML = '';
   ign.forEach(d => {
@@ -1868,6 +1917,7 @@ function rebuildTables(coll, ign, abs) {
     tr.innerHTML = `<td>${esc(d.name)}</td><td><span class="badge badge-red">${esc(d.reason||'')}</span></td>`;
     ti.appendChild(tr);
   });
+  setEmptyState('tbody-ignored', 2, 'No ignored entries');
   document.getElementById('tc-collected').textContent = coll.length;
   document.getElementById('tc-ignored').textContent = ign.length;
   const abSec = document.getElementById('absent-section');
@@ -1880,6 +1930,7 @@ function rebuildTables(coll, ign, abs) {
       tr.innerHTML = `<td>${esc(d.name)}</td><td>${d.student_id ? esc(d.student_id) : '-'}</td>`;
       ta.appendChild(tr);
     });
+    setEmptyState('tbody-absent', 2, 'No absences recorded');
     document.getElementById('absent-count').textContent = '(' + absentRows.length + ')';
   } else {
     abSec.style.display = 'none';
