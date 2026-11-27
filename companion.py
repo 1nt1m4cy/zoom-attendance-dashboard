@@ -415,8 +415,13 @@ def add_entry(raw_text):
     grp = extract_group(raw_text)
     name = clean_name(raw_text)
     if not name or len(name) < 3:
-        return
-    if re.match(r'^[A-Z]{1,3}$', name):
+        if not sid:
+            return
+        # Joined with only an index/student ID, no name text left after cleaning.
+        # Keep the entry (keyed by the ID) instead of dropping it silently;
+        # group/single-group eligibility is still decided below like any other entry.
+        name = f"ID {sid}"
+    elif re.match(r'^[A-Z]{1,3}$', name):
         return
 
     nk = normalize(name)
@@ -484,7 +489,18 @@ def _rebuild_lists():
 
     if roster_mode and roster:
         matched_roster = set()
+        mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
         for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
+            # Mixed meeting: a roster match only counts if the group tag confirms
+            # the student is actually in this group's session, same rule as the
+            # no-roster path. Single-group meetings don't need a group tag.
+            if mixed:
+                if v['group'] and v['group'] != MY_GROUP:
+                    ignored.append({**v, 'reason': f"not in Group {MY_GROUP} (Grp {v['group']})"})
+                    continue
+                if not v['group']:
+                    ignored.append({**v, 'reason': "no group tag" if v['student_id'] else "no group tag + no student ID"})
+                    continue
             match = roster_match(v['name'], v.get('student_id', ''))
             if match:
                 rn = normalize(match['name'])
@@ -502,7 +518,6 @@ def _rebuild_lists():
             if normalize(r['name']) not in matched_roster:
                 absent.append({'name': r['name'], 'student_id': r.get('student_id', ''), 'group': '', 'reason': 'absent'})
         state['absent'] = absent
-        mixed = False
     else:
         state['absent'] = []
         mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
