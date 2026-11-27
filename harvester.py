@@ -929,11 +929,17 @@ tr:hover td{background:var(--card-hover)}
     <p class="sub">Drop the link, we handle the rest</p>
     <label>Meeting URL</label>
     <input id="inp-url" placeholder="https://us05web.zoom.us/j/..." autofocus>
-    <label>Output Filename</label>
-    <input id="inp-file" placeholder="e.g. ITPM_Attendance">
-    <label>Your Group <span style="font-weight:400;text-transform:none;color:var(--text3)">(letter only -- e.g. A, B, C)</span></label>
-    <input id="inp-group" placeholder="A" maxlength="1" style="width:60px;text-transform:uppercase;text-align:center;display:inline-block">
-    <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups (mixed class), only your group is collected. Leave as A if unsure.</p>
+    <div style="display:flex;gap:12px;margin-top:20px">
+      <div style="flex:1;text-align:left">
+        <label style="margin-top:0">Output Filename</label>
+        <input id="inp-file" placeholder="e.g. ITPM_Attendance">
+      </div>
+      <div style="width:72px;text-align:left;flex-shrink:0">
+        <label style="margin-top:0">Group</label>
+        <input id="inp-group" placeholder="A" maxlength="1" style="text-transform:uppercase;text-align:center">
+      </div>
+    </div>
+    <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups, only your group is collected. Default: A.</p>
     <button class="btn-primary" id="btn-start" onclick="startHarvest()">Start Harvesting</button>
   </div>
 </div>
