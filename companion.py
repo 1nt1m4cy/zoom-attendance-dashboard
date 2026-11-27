@@ -1441,7 +1441,16 @@ function startTracking() {
       }
       startTimer();
       listenSSE();
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'Start Tracking';
+      showToast(d.error || 'Could not start tracking.', 'error');
     }
+  }).catch(() => {
+    btn.classList.remove('btn-loading');
+    btn.disabled = false;
+    btn.textContent = 'Start Tracking';
+    showToast('Could not reach the server. Try again.', 'error');
   });
 }
 
@@ -1832,14 +1841,14 @@ def clear_roster():
 
 @app.route('/start', methods=['POST'])
 def start():
-    global MY_GROUP
+    global MY_GROUP, _bot_thread
     data = request.get_json(silent=True) or {}
     url = (data.get('url') or '').strip()
     fname = (data.get('filename') or '').strip()
     my_grp = (data.get('group') or '').strip().upper()
     if not url:
         return jsonify(ok=False, error='No URL')
-    if state.get('phase', 'idle') not in ('idle', 'done', 'error'):
+    if _bot_thread is not None and _bot_thread.is_alive():
         return jsonify(ok=False, error='A session is already running. Stop it first.')
     if not fname:
         fname = f"attendance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -1862,6 +1871,7 @@ def start():
     state['phase'] = 'launching'
 
     t = threading.Thread(target=run_bot, args=(url,), daemon=True)
+    _bot_thread = t
     t.start()
     return jsonify(ok=True)
 
@@ -1874,6 +1884,7 @@ def stop():
 
 _saved_path = [None]
 _saved_csv = [None]
+_bot_thread = None
 
 @app.route('/save', methods=['POST'])
 def save():
