@@ -178,6 +178,10 @@ event_q = queue.Queue()
 seen = {}
 groups_found = set()
 MY_GROUP = 'A'
+# Explicit class-type selection from the dashboard ('single' or 'mixed').
+# When set it always wins; '' means no explicit choice was made, so fall
+# back to auto-detecting from the group tags actually seen so far.
+CLASS_MODE = ''
 
 roster = []
 roster_mode = False
@@ -414,6 +418,18 @@ def emit(etype, **kwargs):
         state['phase'] = kwargs.get('phase', state.get('phase', 'idle'))
     event_q.put({'type': etype, **kwargs})
 
+def _is_mixed():
+    """Whether mixed-group gating applies: an explicit dashboard choice
+    (CLASS_MODE) always wins -- 'single' ignores group tags and prioritizes
+    student ID, 'mixed' requires the group tag to match MY_GROUP. With no
+    explicit choice, fall back to auto-detecting from the group tags seen
+    so far (legacy behaviour)."""
+    if CLASS_MODE == 'single':
+        return False
+    if CLASS_MODE == 'mixed':
+        return True
+    return bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+
 def add_entry(raw_text):
     raw_text = raw_text.strip()
     if not raw_text or len(raw_text) < 3:
@@ -468,7 +484,7 @@ def add_entry(raw_text):
 
         if not skip:
             seen[key] = {"name": name, "student_id": sid or "", "group": grp or ""}
-            mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+            mixed = _is_mixed()
             tag = f"ID:{sid}" if sid else "NO-ID"
             reason = None
             if mixed:
@@ -498,7 +514,7 @@ def _rebuild_lists():
 
     if roster_mode and roster:
         matched_roster = set()
-        mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+        mixed = _is_mixed()
         for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
             # Mixed meeting: a roster match only counts if the group tag confirms
             # the student is actually in this group's session, same rule as the
@@ -529,7 +545,7 @@ def _rebuild_lists():
         state['absent'] = absent
     else:
         state['absent'] = []
-        mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+        mixed = _is_mixed()
         for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
             if mixed:
                 if v['group'] == MY_GROUP:
@@ -1031,6 +1047,9 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:var(--bg)
 .btn-primary{width:100%;padding:14px;margin-top:28px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:.95rem;font-weight:600;cursor:pointer;transition:background .2s}
 .btn-primary:hover{background:var(--accent2)}
 .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+.mode-btn{flex:1;padding:12px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text2);font-size:.82rem;font-weight:600;cursor:pointer;transition:border .2s,color .2s,background .2s}
+.mode-btn:hover{border-color:var(--accent)}
+.mode-btn.active{border-color:var(--accent);background:rgba(99,102,241,.1);color:var(--accent)}
 
 /* DASHBOARD */
 #dashboard{display:none;min-height:100vh;padding:0}
@@ -1194,12 +1213,23 @@ tr:hover td{background:var(--card-hover)}
     <p class="sub">Drop the link, we handle the rest</p>
     <label>Meeting URL</label>
     <input id="inp-url" placeholder="https://us05web.zoom.us/j/..." autofocus>
+
+    <label>Class Type</label>
+    <div style="display:flex;gap:10px" id="class-mode-row">
+      <button type="button" class="mode-btn" id="mode-btn-single" onclick="selectClassMode('single')">Single Group Class</button>
+      <button type="button" class="mode-btn" id="mode-btn-mixed" onclick="selectClassMode('mixed')">Mixed Group Class</button>
+    </div>
+    <p id="class-mode-hint" style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">
+      Single: everyone is one class &mdash; only a student ID is required, group tags are ignored.
+      Mixed: several groups share the meeting &mdash; only your group's tag is collected, ID alone is not enough.
+    </p>
+
     <div style="display:flex;gap:12px;margin-top:20px">
       <div style="flex:1;text-align:left">
         <label style="margin-top:0">Output Filename</label>
         <input id="inp-file" placeholder="e.g. ITPM_Attendance">
       </div>
-      <div style="width:72px;text-align:left;flex-shrink:0">
+      <div style="width:72px;text-align:left;flex-shrink:0" id="group-field-wrap">
         <label style="margin-top:0">Group</label>
         <input id="inp-group" placeholder="A" maxlength="1" style="text-transform:uppercase;text-align:center">
       </div>
@@ -1383,8 +1413,23 @@ tr:hover td{background:var(--card-hover)}
 let timerInterval, startTime;
 let collectedRows = [], ignoredRows = [], absentRows = [];
 let rosterMode = false;
+let selectedClassMode = '';
 
 let rosterFilename = '';
+
+function selectClassMode(mode) {
+  selectedClassMode = mode;
+  document.getElementById('mode-btn-single').classList.toggle('active', mode === 'single');
+  document.getElementById('mode-btn-mixed').classList.toggle('active', mode === 'mixed');
+  const groupWrap = document.getElementById('group-field-wrap');
+  const grpInput = document.getElementById('inp-group');
+  if (mode === 'single') {
+    groupWrap.style.display = 'none';
+    grpInput.value = '';
+  } else {
+    groupWrap.style.display = '';
+  }
+}
 
 function toggleCreds() {
   const cb = document.getElementById('creds-toggle');
@@ -1506,6 +1551,10 @@ function startTracking() {
   const zoomEmail = useCreds ? document.getElementById('inp-zoom-email').value.trim() : '';
   const zoomPw = useCreds ? document.getElementById('inp-zoom-pw').value : '';
   if (!url) { document.getElementById('inp-url').style.borderColor='var(--red)'; return; }
+  if (!selectedClassMode) {
+    showToast('Pick "Single Group Class" or "Mixed Group Class" first.', 'error');
+    return;
+  }
   if (useCreds && (!zoomEmail || !zoomPw)) {
     showToast('Enter both the Zoom email and password, or turn off "Use a different Zoom login".', 'error');
     return;
@@ -1519,7 +1568,7 @@ function startTracking() {
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url: url, filename: fname, group: grp, email: zoomEmail, password: zoomPw})
+    body: JSON.stringify({url: url, filename: fname, group: grp, class_mode: selectedClassMode, email: zoomEmail, password: zoomPw})
   }).then(r => r.json()).then(d => {
     btn.classList.remove('btn-loading');
     if (d.ok) {
@@ -1933,11 +1982,12 @@ def clear_roster():
 
 @app.route('/start', methods=['POST'])
 def start():
-    global MY_GROUP, _bot_thread
+    global MY_GROUP, _bot_thread, CLASS_MODE
     data = request.get_json(silent=True) or {}
     url = (data.get('url') or '').strip()
     fname = (data.get('filename') or '').strip()
     my_grp = (data.get('group') or '').strip().upper()
+    class_mode = (data.get('class_mode') or '').strip().lower()
     # Optional per-session Zoom login typed into the dashboard. Only ever kept
     # as local variables for this request + the bot thread; never written to
     # `state`, never logged, never echoed back to the client.
@@ -1945,6 +1995,8 @@ def start():
     cred_pw = data.get('password') or ''
     if not url:
         return jsonify(ok=False, error='No URL')
+    if class_mode not in ('single', 'mixed'):
+        return jsonify(ok=False, error='Pick "Single Group Class" or "Mixed Group Class" first.')
     if _bot_thread is not None and _bot_thread.is_alive():
         return jsonify(ok=False, error='A session is already running. Stop it first.')
     if cred_email and not cred_pw or cred_pw and not cred_email:
@@ -1961,6 +2013,7 @@ def start():
 
     if my_grp and len(my_grp) == 1 and my_grp.isalpha():
         MY_GROUP = my_grp
+    CLASS_MODE = class_mode
 
     with lock:
         seen.clear()
@@ -2022,7 +2075,7 @@ def download_csv():
 def get_state():
     c = state.get('collected', [])
     ig = state.get('ignored', [])
-    mixed_val = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+    mixed_val = _is_mixed()
     ab = state.get('absent', [])
     return jsonify(
         phase=state.get('phase', 'idle'),
@@ -2032,6 +2085,7 @@ def get_state():
         absent=[{'name':v['name'],'student_id':v.get('student_id','')} for v in ab],
         groups=sorted(list(groups_found)) if groups_found else [],
         mixed=mixed_val,
+        class_mode=CLASS_MODE,
         my_group=MY_GROUP,
         roster_mode=roster_mode,
         roster_count=len(roster),
