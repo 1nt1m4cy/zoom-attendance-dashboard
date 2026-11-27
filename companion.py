@@ -86,15 +86,18 @@ def _load_smtp():
     p = os.environ.get('SMTP_PASSWORD', '')
     return (e, p) if e and p else (None, None)
 
-def send_attendance_email(recipient, filepath, filename):
+def send_attendance_email(recipients, filepath, filename):
     """Send the attendance Excel file as an email attachment."""
     smtp_email, smtp_pass = _load_smtp()
     if not smtp_email or not smtp_pass:
         return False, "SMTP credentials not configured. Set SMTP_EMAIL and SMTP_PASSWORD."
 
+    if isinstance(recipients, str):
+        recipients = [recipients]
+
     msg = MIMEMultipart()
     msg['From'] = smtp_email
-    msg['To'] = recipient
+    msg['To'] = ', '.join(recipients)
     msg['Subject'] = f"Attendance Report - {filename}"
 
     body = (
@@ -1414,6 +1417,7 @@ tr:hover td{background:var(--card-hover)}
   <button class="btn-save" id="btn-save" onclick="saveExport()" disabled>Save &amp; Export</button>
   <button class="btn-stop" id="btn-csv" onclick="downloadCSV()" style="display:none;border-color:var(--accent);color:var(--accent)">Download CSV</button>
   <button class="btn-email" id="btn-email" onclick="openEmailModal()" disabled style="display:none">Email Attendance</button>
+  <button class="btn-stop" id="btn-copy-summary" onclick="copySummary()" style="display:none">Copy Summary</button>
 </div>
 
 </div></div>
@@ -1423,8 +1427,8 @@ tr:hover td{background:var(--card-hover)}
   <div class="email-card">
     <h2>Send Attendance via Email</h2>
     <p class="esub">The saved attendance file will be sent as an attachment.</p>
-    <label>Recipient Email</label>
-    <input id="email-to" type="email" placeholder="lecturer@university.edu">
+    <label>Recipient Email(s)</label>
+    <input id="email-to" type="text" placeholder="lecturer@university.edu, dept@university.edu">
     <div class="email-actions">
       <button class="btn-cancel" onclick="closeEmailModal()">Cancel</button>
       <button class="btn-send" id="btn-send-email" onclick="sendEmail()">Send</button>
@@ -1745,7 +1749,23 @@ function stopCollection() {
     btn.classList.remove('btn-loading');
     if(d.ok) showToast('Collection stopped','success');
     btn.textContent='Stop Collection';
+    fetch('/smtp-status').then(r=>r.json()).then(s=>{
+      if(s.configured){
+        const eb=document.getElementById('btn-email');
+        eb.style.display='inline-block';eb.disabled=false;
+      }
+    });
+    document.getElementById('btn-copy-summary').style.display='inline-block';
   });
+}
+
+function copySummary(){
+  fetch('/summary').then(r=>r.json()).then(d=>{
+    if(!d.ok){showToast(d.error||'Could not build summary','error');return;}
+    navigator.clipboard.writeText(d.text).then(()=>{
+      showToast('Summary copied to clipboard','success');
+    }).catch(()=>{showToast('Clipboard unavailable','error');});
+  }).catch(()=>{showToast('Network error','error');});
 }
 
 function saveExport() {
@@ -1779,16 +1799,18 @@ function openEmailModal(){document.getElementById('email-modal').classList.add('
 function closeEmailModal(){document.getElementById('email-modal').classList.remove('active');}
 
 function sendEmail(){
-  const to=document.getElementById('email-to').value.trim();
-  if(!to||!to.includes('@')){document.getElementById('email-to').style.borderColor='var(--red)';return;}
+  const raw=document.getElementById('email-to').value.trim();
+  const addrs=raw.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!addrs.length||addrs.some(a=>!a.includes('@'))){document.getElementById('email-to').style.borderColor='var(--red)';return;}
+  document.getElementById('email-to').style.borderColor='';
   const btn=document.getElementById('btn-send-email');
   btn.disabled=true;btn.textContent='Sending...';
   btn.classList.add('btn-loading');btn.style.setProperty('--glow-color','var(--accent)');
-  fetch('/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:to})})
+  fetch('/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:raw})})
   .then(r=>r.json()).then(d=>{
     btn.classList.remove('btn-loading');
     if(d.ok){
-      showToast('Email sent to '+to,'success');
+      showToast('Email sent to '+addrs.join(', '),'success');
       closeEmailModal();
       btn.textContent='Send';btn.disabled=false;
     } else {
@@ -2066,8 +2088,7 @@ _saved_path = [None]
 _saved_csv = [None]
 _bot_thread = None
 
-@app.route('/save', methods=['POST'])
-def save():
+def do_save():
     fname = state.get('filename', 'attendance')
     desktop = get_desktop()
     xlsx_path = os.path.join(desktop, fname + '.xlsx')
@@ -2077,9 +2098,16 @@ def save():
         save_csv(csv_path)
         _saved_path[0] = xlsx_path
         _saved_csv[0] = csv_path
-        return jsonify(ok=True, path=xlsx_path)
+        return True, xlsx_path
     except Exception as e:
-        return jsonify(ok=False, error=str(e))
+        return False, str(e)
+
+@app.route('/save', methods=['POST'])
+def save():
+    ok, result = do_save()
+    if ok:
+        return jsonify(ok=True, path=result)
+    return jsonify(ok=False, error=result)
 
 
 @app.route('/download')
@@ -2116,16 +2144,42 @@ def get_state():
         roster_names=[{'name': e['name'], 'student_id': e.get('student_id', '')} for e in roster] if roster else [],
     )
 
+@app.route('/summary')
+def summary_route():
+    c = state.get('collected', [])
+    ig = state.get('ignored', [])
+    ab = state.get('absent', [])
+    lines = [
+        f"Attendance Summary - {state.get('filename', 'attendance')}",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        '',
+        f"Present: {len(c)}",
+        f"Absent: {len(ab)}",
+        f"Ignored: {len(ig)}",
+        '',
+    ]
+    if c:
+        lines.append('Present:')
+        lines.extend(f"  - {v['name']}" for v in c)
+    if ab:
+        lines.append('')
+        lines.append('Absent:')
+        lines.extend(f"  - {v['name']}" for v in ab)
+    return jsonify(ok=True, text='\n'.join(lines))
+
 @app.route('/email', methods=['POST'])
 def email_attendance():
     data = request.get_json(silent=True) or {}
-    recipient = (data.get('to', '') or '').strip()
-    if not recipient or '@' not in recipient:
+    raw = (data.get('to', '') or '')
+    recipients = [e.strip() for e in raw.split(',') if e.strip()]
+    if not recipients or any('@' not in e for e in recipients):
         return jsonify(ok=False, error='Enter a valid email address.')
     if not _saved_path[0] or not os.path.isfile(_saved_path[0]):
-        return jsonify(ok=False, error='Save attendance first before sending.')
+        ok, result = do_save()
+        if not ok:
+            return jsonify(ok=False, error=f'Auto-save failed: {result}')
     fname = state.get('filename', 'attendance')
-    ok, msg = send_attendance_email(recipient, _saved_path[0], fname)
+    ok, msg = send_attendance_email(recipients, _saved_path[0], fname)
     return jsonify(ok=ok, message=msg if ok else None, error=msg if not ok else None)
 
 @app.route('/smtp-status')
