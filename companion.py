@@ -1193,7 +1193,7 @@ tr:hover td{background:var(--card-hover)}
            ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
            ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';handleRosterDrop(event)"
            style="border:2px dashed var(--border);border-radius:10px;padding:20px 16px;text-align:center;cursor:pointer;transition:border-color .2s, background .2s">
-        <div id="roster-drop-icon" style="font-size:1.6rem;margin-bottom:6px;opacity:.5">&#128196;</div>
+        <div id="roster-drop-icon" style="font-size:1.6rem;margin-bottom:6px;opacity:.5"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg></div>
         <div id="roster-drop-label" style="font-size:.82rem;color:var(--text2);font-weight:500">Click to upload or drag and drop</div>
         <div style="font-size:.68rem;color:var(--text3);margin-top:4px">.txt, .json, .md, .xlsx</div>
       </div>
@@ -1251,7 +1251,7 @@ tr:hover td{background:var(--card-hover)}
 <div id="dash-roster-banner" style="display:none;margin-bottom:16px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
   <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(99,102,241,.05)">
     <div style="display:flex;align-items:center;gap:8px">
-      <span style="font-size:1rem;opacity:.6">&#128196;</span>
+      <span style="font-size:1rem;opacity:.6"><svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg></span>
       <span style="font-size:.82rem;font-weight:600;color:var(--text1)">Using roster:</span>
       <span id="dash-roster-fname" style="font-size:.82rem;color:var(--accent);font-weight:500"></span>
     </div>
@@ -1480,7 +1480,10 @@ const stepMap = {
 function setStep(id, cls) {
   const el = document.getElementById('si-'+id);
   el.className = 'step-icon ' + cls;
-  el.textContent = cls==='done' ? '✓' : cls==='error' ? '✗' : el.textContent.replace(/[^0-9]/g,'') || '';
+  if (!el.dataset.n) el.dataset.n = el.textContent.replace(/[^0-9]/g,'');
+  if (cls === 'done') el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+  else if (cls === 'error') el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  else el.textContent = el.dataset.n;
   const row = document.getElementById('step-'+id);
   row.querySelector('.step-text').className = 'step-text' + (cls==='active' ? ' active' : '');
 }
