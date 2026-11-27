@@ -835,10 +835,21 @@ tr:hover td{background:var(--card-hover)}
 .actions-bar{display:flex;gap:12px;justify-content:flex-end;padding:16px 0}
 .btn-stop{padding:10px 24px;background:transparent;border:1px solid var(--red);color:var(--red);border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
 .btn-stop:hover{background:var(--red-bg)}
-.btn-save{padding:10px 28px;background:var(--green);color:#0b0d13;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:700;cursor:pointer;transition:all .2s}
+.btn-save{padding:10px 28px;background:var(--green);color:#0b0d13;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:700;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;z-index:0}
 .btn-save:hover{background:#25bf8e}
 .btn-save:disabled{opacity:.5;cursor:not-allowed}
-.btn-email{padding:10px 24px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-primary{position:relative;overflow:hidden;z-index:0}
+.btn-stop{position:relative;overflow:hidden;z-index:0}
+.btn-loading{pointer-events:none;border-color:transparent!important}
+.btn-loading::before{content:'';position:absolute;top:50%;left:50%;width:calc(100% + 6px);height:calc(100% + 6px);margin-top:calc(-50% - 3px);margin-left:calc(-50% - 3px);border-radius:inherit;background:conic-gradient(transparent 55%,var(--glow-color,#1dd882) 75%,transparent 100%);animation:border-spin 1.2s linear infinite;z-index:-2}
+.btn-loading::after{content:'';position:absolute;inset:2px;border-radius:inherit;z-index:-1}
+.btn-save.btn-loading::after{background:var(--green)}
+.btn-stop.btn-loading::after{background:var(--bg)}
+.btn-primary.btn-loading::after{background:var(--accent)}
+.email-actions .btn-send.btn-loading::after{background:var(--accent)}
+.btn-email.btn-loading::after{background:var(--bg)}
+@keyframes border-spin{to{transform:rotate(360deg)}}
+.btn-email{padding:10px 24px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s;position:relative;overflow:hidden;z-index:0}
 .btn-email:hover{background:var(--blue-bg)}.btn-email:disabled{opacity:.5;cursor:not-allowed}
 
 #email-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:9000;align-items:center;justify-content:center}
@@ -851,7 +862,7 @@ tr:hover td{background:var(--card-hover)}
 .email-card input:focus{border-color:var(--accent)}
 .email-actions{display:flex;gap:10px;justify-content:flex-end}
 .email-actions .btn-cancel{padding:9px 20px;background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:var(--radius-sm);font-size:.85rem;cursor:pointer}
-.email-actions .btn-send{padding:9px 24px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer}
+.email-actions .btn-send{padding:9px 24px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer;position:relative;overflow:hidden;z-index:0}
 .email-actions .btn-send:disabled{opacity:.5;cursor:not-allowed}
 
 /* SCAN OVERLAY */
@@ -1013,14 +1024,18 @@ function startHarvest() {
   const url = document.getElementById('inp-url').value.trim();
   const fname = document.getElementById('inp-file').value.trim();
   if (!url) { document.getElementById('inp-url').style.borderColor='var(--red)'; return; }
-  document.getElementById('btn-start').disabled = true;
-  document.getElementById('btn-start').textContent = 'Launching...';
+  const btn = document.getElementById('btn-start');
+  btn.disabled = true;
+  btn.textContent = 'Launching...';
+  btn.classList.add('btn-loading');
+  btn.style.setProperty('--glow-color','var(--accent)');
 
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({url: url, filename: fname})
   }).then(r => r.json()).then(d => {
+    btn.classList.remove('btn-loading');
     if (d.ok) {
       document.getElementById('landing').style.display = 'none';
       document.getElementById('dashboard').style.display = 'block';
@@ -1144,21 +1159,27 @@ function handleEvent(d) {
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
 function stopCollection() {
+  const btn=document.getElementById('btn-stop');
+  btn.classList.add('btn-loading');btn.style.setProperty('--glow-color','var(--red)');
+  btn.textContent='Stopping...';
   fetch('/stop', {method:'POST'}).then(r=>r.json()).then(d=>{
+    btn.classList.remove('btn-loading');
     if(d.ok) showToast('Collection stopped','success');
+    btn.textContent='Stop Collection';
   });
 }
 
 function saveExport() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true; btn.textContent = 'Saving...';
+  btn.classList.add('btn-loading');btn.style.setProperty('--glow-color','var(--green)');
   fetch('/save',{method:'POST'}).then(r=>r.json()).then(d=>{
+    btn.classList.remove('btn-loading');
     if(d.ok){
       showToast('Saved to '+d.path,'success');
       window.location.href='/download';
       setTimeout(()=>{btn.textContent='Saved!';},500);
       setTimeout(()=>{btn.textContent='Save & Export';btn.disabled=false;},3000);
-      // Show email button if SMTP is configured
       fetch('/smtp-status').then(r=>r.json()).then(s=>{
         if(s.configured){
           const eb=document.getElementById('btn-email');
@@ -1180,8 +1201,10 @@ function sendEmail(){
   if(!to||!to.includes('@')){document.getElementById('email-to').style.borderColor='var(--red)';return;}
   const btn=document.getElementById('btn-send-email');
   btn.disabled=true;btn.textContent='Sending...';
+  btn.classList.add('btn-loading');btn.style.setProperty('--glow-color','var(--accent)');
   fetch('/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:to})})
   .then(r=>r.json()).then(d=>{
+    btn.classList.remove('btn-loading');
     if(d.ok){
       showToast('Email sent to '+to,'success');
       closeEmailModal();
@@ -1190,7 +1213,7 @@ function sendEmail(){
       showToast(d.error||'Send failed','error');
       btn.textContent='Send';btn.disabled=false;
     }
-  }).catch(()=>{showToast('Network error','error');btn.textContent='Send';btn.disabled=false;});
+  }).catch(()=>{btn.classList.remove('btn-loading');showToast('Network error','error');btn.textContent='Send';btn.disabled=false;});
 }
 
 document.getElementById('email-to').addEventListener('keydown',function(e){if(e.key==='Enter')sendEmail();});
