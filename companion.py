@@ -224,23 +224,113 @@ def is_noise(text):
         return True
     return False
 
+_JSON_NAME_KEYS = {'name', 'fullname', 'studentname', 'student', 'studentfullname', 'displayname',
+                   'participant', 'participantname', 'learner', 'learnername', 'attendee', 'username', 'candidate'}
+_JSON_ID_KEYS = {'studentid', 'id', 'index', 'indexnumber', 'indexno', 'studentno', 'studentnumber', 'regno',
+                 'registrationnumber', 'matricnumber', 'idnumber', 'sid', 'number', 'no', 'refno', 'referencenumber'}
+_JSON_FIRST_KEYS = {'firstname', 'givenname', 'forename', 'first'}
+_JSON_LAST_KEYS = {'lastname', 'surname', 'familyname', 'last'}
+_JSON_MID_KEYS = {'middlename', 'othernames', 'othername', 'middle'}
+
+def _jkey(k):
+    return re.sub(r'[^a-z0-9]', '', str(k).lower())
+
+def _jscalar(v):
+    if isinstance(v, bool) or v is None:
+        return ''
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    if isinstance(v, (str, int, float)):
+        return str(v).strip()
+    return ''
+
+def _json_dict_entry(d):
+    keyed = {_jkey(k): _jscalar(v) for k, v in d.items()}
+    name = next((keyed[k] for k in _JSON_NAME_KEYS if keyed.get(k) and not keyed[k].isdigit()), '')
+    if not name:
+        first = next((keyed[k] for k in _JSON_FIRST_KEYS if keyed.get(k)), '')
+        last = next((keyed[k] for k in _JSON_LAST_KEYS if keyed.get(k)), '')
+        mid = next((keyed[k] for k in _JSON_MID_KEYS if keyed.get(k)), '')
+        name = ' '.join(p for p in (first, mid, last) if p)
+    if not name:
+        return None
+    sid = next((keyed[k] for k in ('studentid', 'indexnumber', 'indexno', 'index', 'studentno', 'studentnumber',
+                                   'regno', 'registrationnumber', 'matricnumber', 'idnumber', 'sid', 'id',
+                                   'number', 'no', 'refno', 'referencenumber') if keyed.get(k)), '')
+    return {'name': name, 'student_id': sid}
+
+def json_roster_walk(node, entries, lines):
+    """Collect roster entries from any JSON shape: objects, arrays, nested containers, row arrays, id/name maps."""
+    if isinstance(node, str):
+        lines.append(node)
+    elif isinstance(node, dict):
+        entry = _json_dict_entry(node)
+        if entry:
+            entries.append(entry)
+            return
+        scalars = {k: _jscalar(v) for k, v in node.items() if _jscalar(v)}
+        containers = [v for v in node.values() if isinstance(v, (dict, list))]
+        if scalars and not containers:
+            for k, v in scalars.items():
+                k = str(k).strip()
+                if re.fullmatch(r'\d{5,}', k) and not v.isdigit():
+                    entries.append({'name': v, 'student_id': k})
+                elif re.fullmatch(r'\d{5,}', v) and not k.isdigit():
+                    entries.append({'name': k, 'student_id': v})
+                elif not v.isdigit() and _jkey(k) not in _JSON_ID_KEYS:
+                    lines.append(v)
+            return
+        for k, v in node.items():
+            if isinstance(v, (dict, list)):
+                json_roster_walk(v, entries, lines)
+            elif isinstance(v, str) and _jscalar(v) and _jkey(k) not in _JSON_ID_KEYS and not v.isdigit():
+                lines.append(v)
+    elif isinstance(node, list):
+        if node and all(isinstance(r, list) for r in node):
+            header = [_jkey(c) for c in node[0]]
+            has_header = any(h in _JSON_NAME_KEYS | _JSON_FIRST_KEYS | _JSON_LAST_KEYS for h in header)
+            rows = node[1:] if has_header else node
+            for row in rows:
+                if has_header:
+                    entry = _json_dict_entry({str(h): c for h, c in zip(node[0], row)})
+                    if entry:
+                        entries.append(entry)
+                else:
+                    parts = [_jscalar(c) for c in row if _jscalar(c)]
+                    if parts:
+                        lines.append(' '.join(parts))
+        else:
+            for item in node:
+                json_roster_walk(item, entries, lines)
+    # numbers, booleans and null carry no roster information
+
 def parse_roster(content, filename):
     entries = []
     ext = os.path.splitext(filename)[1].lower()
     lines = []
     if ext == '.json':
+        text = content.decode('utf-8-sig', errors='ignore') if isinstance(content, bytes) else content.lstrip('\ufeff')
         try:
-            data = json.loads(content)
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        n = item.get('name', item.get('Name', item.get('student_name', '')))
-                        sid = str(item.get('student_id', item.get('studentId', item.get('StudentID', item.get('id', item.get('ID', item.get('index', item.get('index_number', ''))))))))
-                        if n: entries.append({'name': n.strip(), 'student_id': sid.strip()})
-                    elif isinstance(item, str):
-                        lines.append(item)
+            data = json.loads(text)
         except json.JSONDecodeError:
-            lines = content.splitlines()
+            data = []
+            for ln in text.splitlines():
+                ln = ln.strip().rstrip(',')
+                if not ln:
+                    continue
+                try:
+                    data.append(json.loads(ln))
+                except json.JSONDecodeError:
+                    data.append(ln)
+        json_roster_walk(data, entries, lines)
+        seen = set()
+        unique = []
+        for e in entries:
+            key = (normalize(e['name']), e['student_id'])
+            if key not in seen:
+                seen.add(key)
+                unique.append(e)
+        entries = unique
     elif ext == '.xlsx':
         from io import BytesIO
         from openpyxl import load_workbook
