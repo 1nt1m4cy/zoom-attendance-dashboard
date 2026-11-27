@@ -283,8 +283,6 @@ def json_roster_walk(node, entries, lines):
         for k, v in node.items():
             if isinstance(v, (dict, list)):
                 json_roster_walk(v, entries, lines)
-            elif isinstance(v, str) and _jscalar(v) and _jkey(k) not in _JSON_ID_KEYS and not v.isdigit():
-                lines.append(v)
     elif isinstance(node, list):
         if node and all(isinstance(r, list) for r in node):
             header = [_jkey(c) for c in node[0]]
