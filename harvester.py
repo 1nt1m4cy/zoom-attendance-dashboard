@@ -168,6 +168,8 @@ lock = threading.Lock()
 event_q = queue.Queue()
 seen = {}
 groups_found = set()
+MY_GROUP = 'A'
+
 state = {
     'phase': 'idle',
     'meeting_url': '',
@@ -267,12 +269,12 @@ def add_entry(raw_text):
 
         if not skip:
             seen[key] = {"name": name, "student_id": sid or "", "group": grp or ""}
-            mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {'A'}))
+            mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
             tag = f"ID:{sid}" if sid else "NO-ID"
             reason = None
             if mixed:
-                if grp and grp != 'A':
-                    reason = f"not in Group A (Grp {grp})"
+                if grp and grp != MY_GROUP:
+                    reason = f"not in Group {MY_GROUP} (Grp {grp})"
                 elif not grp and not sid:
                     reason = "no group tag + no student ID"
             else:
@@ -292,15 +294,15 @@ def add_entry(raw_text):
             _rebuild_lists()
 
 def _rebuild_lists():
-    mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {'A'}))
+    mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
     collected = []
     ignored = []
     for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
         if mixed:
-            if v['group'] == 'A':
+            if v['group'] == MY_GROUP:
                 collected.append(v)
-            elif v['group'] and v['group'] != 'A':
-                ignored.append({**v, 'reason': f"not in Group A (Grp {v['group']})"})
+            elif v['group'] and v['group'] != MY_GROUP:
+                ignored.append({**v, 'reason': f"not in Group {MY_GROUP} (Grp {v['group']})"})
             elif v['student_id']:
                 collected.append(v)
             else:
@@ -929,6 +931,9 @@ tr:hover td{background:var(--card-hover)}
     <input id="inp-url" placeholder="https://us05web.zoom.us/j/..." autofocus>
     <label>Output Filename</label>
     <input id="inp-file" placeholder="e.g. ITPM_Attendance">
+    <label>Your Group <span style="font-weight:400;text-transform:none;color:var(--text3)">(letter only -- e.g. A, B, C)</span></label>
+    <input id="inp-group" placeholder="A" maxlength="1" style="width:60px;text-transform:uppercase;text-align:center;display:inline-block">
+    <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups (mixed class), only your group is collected. Leave as A if unsure.</p>
     <button class="btn-primary" id="btn-start" onclick="startHarvest()">Start Harvesting</button>
   </div>
 </div>
@@ -1023,6 +1028,7 @@ let collectedRows = [], ignoredRows = [];
 function startHarvest() {
   const url = document.getElementById('inp-url').value.trim();
   const fname = document.getElementById('inp-file').value.trim();
+  const grp = document.getElementById('inp-group').value.trim().toUpperCase() || 'A';
   if (!url) { document.getElementById('inp-url').style.borderColor='var(--red)'; return; }
   const btn = document.getElementById('btn-start');
   btn.disabled = true;
@@ -1033,7 +1039,7 @@ function startHarvest() {
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url: url, filename: fname})
+    body: JSON.stringify({url: url, filename: fname, group: grp})
   }).then(r => r.json()).then(d => {
     btn.classList.remove('btn-loading');
     if (d.ok) {
@@ -1338,15 +1344,20 @@ def stream():
 
 @app.route('/start', methods=['POST'])
 def start():
+    global MY_GROUP
     data = request.json
     url = data.get('url', '').strip()
     fname = data.get('filename', '').strip()
+    my_grp = data.get('group', '').strip().upper()
     if not url:
         return jsonify(ok=False, error='No URL')
     if not fname:
         fname = f"attendance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     fname = re.sub(r'\.xlsx$', '', fname, flags=re.IGNORECASE)
     fname = re.sub(r'[/\\:*?"<>|]', '_', fname)
+
+    if my_grp and len(my_grp) == 1 and my_grp.isalpha():
+        MY_GROUP = my_grp
 
     state['meeting_url'] = url
     state['filename'] = fname
@@ -1388,7 +1399,7 @@ def download():
 def get_state():
     c = state.get('collected', [])
     ig = state.get('ignored', [])
-    mixed_val = bool(len(groups_found) > 1 or (groups_found and groups_found != {'A'}))
+    mixed_val = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
     return jsonify(
         phase=state.get('phase', 'idle'),
         total=state.get('total_in_meeting', 0),
@@ -1396,6 +1407,7 @@ def get_state():
         ignored=[{'name':v['name'],'reason':v.get('reason',''),'student_id':v.get('student_id',''),'group':v.get('group','')} for v in ig],
         groups=sorted(list(groups_found)) if groups_found else [],
         mixed=mixed_val,
+        my_group=MY_GROUP,
     )
 
 @app.route('/email', methods=['POST'])
