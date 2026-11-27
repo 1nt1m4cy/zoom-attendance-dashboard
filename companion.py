@@ -206,17 +206,19 @@ def clean_name(text):
     text = re.sub(r'has joined the meeting', '', text, flags=re.IGNORECASE)
     text = re.sub(r'has left the meeting', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+[A-Za-z]\s*$', '', text)
-    text = re.sub(r'[^A-Za-z\s\'-]', '', text)
+    text = re.sub(r"[\d_]|[^\w\s'\-]", '', text)
     text = text.strip(' -')
     text = re.sub(r'^([A-Z]{1,3})\s+(?=[A-Z][a-z])', '', text)
     return ' '.join(text.split())
 
 def normalize(name):
-    return re.sub(r'\s+', ' ', name.strip().lower())
+    return re.sub(r'\s+', ' ', re.sub(r'[-_.]+', ' ', name).strip().lower())
+
+_NOISE_RE = re.compile(r'(?<!\w)(?:' + '|'.join(re.escape(w) for w in sorted(NOISE_WORDS, key=len, reverse=True)) + r')(?!\w)', re.IGNORECASE)
 
 def is_noise(text):
-    low = text.lower()
-    if any(w in low for w in NOISE_WORDS):
+    # Whole-word match so real names containing e.g. "more", "chat" or "view" are not dropped
+    if _NOISE_RE.search(text):
         return True
     if any(p.search(text) for p in CHAT_PATTERNS):
         return True
@@ -361,7 +363,7 @@ def parse_roster(content, filename):
             continue
         sid = extract_id(line)
         name = re.sub(r'[_(\-/|,\s]*\d{7,13}[_)\-/|,\s]*', ' ', line).strip()
-        name = re.sub(r'[^A-Za-z\s\'-]', '', name).strip()
+        name = re.sub(r"[\d_]|[^\w\s'\-]", '', name).strip()
         if name and len(name) >= 3:
             entries.append({'name': ' '.join(name.split()), 'student_id': sid or ''})
     return entries
@@ -392,6 +394,8 @@ def roster_match(zoom_name, zoom_sid):
     return None
 
 def emit(etype, **kwargs):
+    if etype == 'phase':
+        state['phase'] = kwargs.get('phase', state.get('phase', 'idle'))
     event_q.put({'type': etype, **kwargs})
 
 def add_entry(raw_text):
@@ -427,8 +431,11 @@ def add_entry(raw_text):
 
         skip = False
         for k, v in list(seen.items()):
-            vn = normalize(v['name'])
-            if nk in vn or vn in nk:
+            vt, nt = set(normalize(v['name']).split()), set(nk.split())
+            small = min(len(vt), len(nt))
+            if sid and v['student_id'] and sid != v['student_id']:
+                continue
+            if small >= 2 and (nt <= vt or vt <= nt):
                 if len(name) > len(v['name']):
                     v['name'] = name
                 if sid and not v['student_id']:
@@ -1517,7 +1524,7 @@ function handleEvent(d) {
         const tbody = document.getElementById('tbody-collected');
         const tr = document.createElement('tr');
         tr.className = 'row-new';
-        tr.innerHTML = `<td>${collectedRows.length}</td><td>${esc(d.name)}</td><td><span class="badge badge-green">${d.student_id||'N/A'}</span></td>`;
+        tr.innerHTML = `<td>${collectedRows.length}</td><td>${esc(d.name)}</td><td><span class="badge badge-green">${d.student_id ? esc(d.student_id) : 'N/A'}</span></td>`;
         tbody.appendChild(tr);
       }
     } else {
@@ -1823,12 +1830,14 @@ def clear_roster():
 @app.route('/start', methods=['POST'])
 def start():
     global MY_GROUP
-    data = request.json
-    url = data.get('url', '').strip()
-    fname = data.get('filename', '').strip()
-    my_grp = data.get('group', '').strip().upper()
+    data = request.get_json(silent=True) or {}
+    url = (data.get('url') or '').strip()
+    fname = (data.get('filename') or '').strip()
+    my_grp = (data.get('group') or '').strip().upper()
     if not url:
         return jsonify(ok=False, error='No URL')
+    if state.get('phase', 'idle') not in ('idle', 'done', 'error'):
+        return jsonify(ok=False, error='A session is already running. Stop it first.')
     if not fname:
         fname = f"attendance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     fname = re.sub(r'\.xlsx$', '', fname, flags=re.IGNORECASE)
@@ -1837,9 +1846,17 @@ def start():
     if my_grp and len(my_grp) == 1 and my_grp.isalpha():
         MY_GROUP = my_grp
 
+    with lock:
+        seen.clear()
+        groups_found.clear()
+        state.update(collected=[], ignored=[], absent=[], total_in_meeting=0)
+    while not event_q.empty():
+        try: event_q.get_nowait()
+        except queue.Empty: break
     state['meeting_url'] = url
     state['filename'] = fname
     state['stop'] = False
+    state['phase'] = 'launching'
 
     t = threading.Thread(target=run_bot, args=(url,), daemon=True)
     t.start()
@@ -1906,7 +1923,7 @@ def get_state():
 
 @app.route('/email', methods=['POST'])
 def email_attendance():
-    data = request.json
+    data = request.get_json(silent=True) or {}
     recipient = (data.get('to', '') or '').strip()
     if not recipient or '@' not in recipient:
         return jsonify(ok=False, error='Enter a valid email address.')
