@@ -170,6 +170,9 @@ seen = {}
 groups_found = set()
 MY_GROUP = 'A'
 
+roster = []
+roster_mode = False
+
 state = {
     'phase': 'idle',
     'meeting_url': '',
@@ -219,6 +222,85 @@ def is_noise(text):
     if re.match(r'^[A-Z]{1,3}$', text.strip()):
         return True
     return False
+
+def parse_roster(content, filename):
+    entries = []
+    ext = os.path.splitext(filename)[1].lower()
+    lines = []
+    if ext == '.json':
+        try:
+            data = json.loads(content)
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        n = item.get('name', item.get('Name', item.get('student_name', '')))
+                        sid = str(item.get('student_id', item.get('studentId', item.get('StudentID', item.get('id', item.get('ID', item.get('index', item.get('index_number', ''))))))))
+                        if n: entries.append({'name': n.strip(), 'student_id': sid.strip()})
+                    elif isinstance(item, str):
+                        lines.append(item)
+        except json.JSONDecodeError:
+            lines = content.splitlines()
+    elif ext == '.xlsx':
+        from io import BytesIO
+        from openpyxl import load_workbook
+        wb = load_workbook(BytesIO(content if isinstance(content, bytes) else content.encode()), read_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return []
+        header = [str(c).lower().strip() if c else '' for c in rows[0]]
+        name_col = next((i for i, h in enumerate(header) if h in ('name', 'student_name', 'full_name', 'fullname')), 0)
+        id_col = next((i for i, h in enumerate(header) if h in ('id', 'student_id', 'index', 'index_number', 'student id', 'index number')), None)
+        start = 1 if any(h in ('name', 'student_name', 'full_name', 'fullname', 'id', 'student_id', 'index') for h in header) else 0
+        for row in rows[start:]:
+            n = str(row[name_col]).strip() if name_col < len(row) and row[name_col] else ''
+            sid = str(row[id_col]).strip() if id_col is not None and id_col < len(row) and row[id_col] else ''
+            if n and n.lower() != 'none':
+                entries.append({'name': n, 'student_id': sid if sid.lower() != 'none' else ''})
+        wb.close()
+        return entries
+    else:
+        lines = content.splitlines() if isinstance(content, str) else content.decode('utf-8', errors='ignore').splitlines()
+
+    for line in lines:
+        raw = line.strip()
+        if re.match(r'^#{1,6}\s', raw):
+            continue
+        line = re.sub(r'^[\-\*\d\.]+\s*', '', raw)
+        line = line.strip('- *#>')
+        if not line or len(line) < 3:
+            continue
+        sid = extract_id(line)
+        name = re.sub(r'[_(\-/|,\s]*\d{7,13}[_)\-/|,\s]*', ' ', line).strip()
+        name = re.sub(r'[^A-Za-z\s\'-]', '', name).strip()
+        if name and len(name) >= 3:
+            entries.append({'name': ' '.join(name.split()), 'student_id': sid or ''})
+    return entries
+
+def roster_match(zoom_name, zoom_sid):
+    zn = normalize(zoom_name)
+    zt = set(zn.split())
+    best = None
+    best_score = 0
+    for r in roster:
+        rn = normalize(r['name'])
+        rt = set(rn.split())
+        if zn == rn or (zoom_sid and r['student_id'] and zoom_sid == r['student_id']):
+            return r
+        if zt and rt:
+            common = zt & rt
+            smaller = min(len(zt), len(rt))
+            if len(common) == smaller and smaller >= 2:
+                score = len(common) * 10 + (10 if zoom_sid and r['student_id'] and zoom_sid == r['student_id'] else 0)
+                if score > best_score:
+                    best = r; best_score = score
+            elif len(common) >= 2:
+                score = len(common)
+                if score > best_score:
+                    best = r; best_score = score
+    if best and best_score >= 2:
+        return best
+    return None
 
 def emit(etype, **kwargs):
     event_q.put({'type': etype, **kwargs})
@@ -294,33 +376,60 @@ def add_entry(raw_text):
             _rebuild_lists()
 
 def _rebuild_lists():
-    mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
     collected = []
     ignored = []
-    for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
-        if mixed:
-            if v['group'] == MY_GROUP:
-                collected.append(v)
-            elif v['group'] and v['group'] != MY_GROUP:
-                ignored.append({**v, 'reason': f"not in Group {MY_GROUP} (Grp {v['group']})"})
-            elif v['student_id']:
-                collected.append(v)
+
+    if roster_mode and roster:
+        matched_roster = set()
+        for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
+            match = roster_match(v['name'], v.get('student_id', ''))
+            if match:
+                rn = normalize(match['name'])
+                if rn not in matched_roster:
+                    matched_roster.add(rn)
+                    collected.append({
+                        'name': match['name'],
+                        'student_id': match['student_id'] or v.get('student_id', ''),
+                        'group': v.get('group', ''),
+                    })
             else:
-                ignored.append({**v, 'reason': "no group tag + no student ID"})
-        else:
-            if v['student_id']:
-                collected.append(v)
+                ignored.append({**v, 'reason': 'not on roster'})
+        absent = []
+        for r in roster:
+            if normalize(r['name']) not in matched_roster:
+                absent.append({'name': r['name'], 'student_id': r.get('student_id', ''), 'group': '', 'reason': 'absent'})
+        state['absent'] = absent
+        mixed = False
+    else:
+        state['absent'] = []
+        mixed = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+        for v in sorted(seen.values(), key=lambda x: x['name'].lower()):
+            if mixed:
+                if v['group'] == MY_GROUP:
+                    collected.append(v)
+                elif v['group'] and v['group'] != MY_GROUP:
+                    ignored.append({**v, 'reason': f"not in Group {MY_GROUP} (Grp {v['group']})"})
+                elif v['student_id']:
+                    collected.append(v)
+                else:
+                    ignored.append({**v, 'reason': "no group tag + no student ID"})
             else:
-                ignored.append({**v, 'reason': "no student ID"})
+                if v['student_id']:
+                    collected.append(v)
+                else:
+                    ignored.append({**v, 'reason': "no student ID"})
+
     state['collected'] = collected
     state['ignored'] = ignored
     emit('stats', collected=len(collected), ignored=len(ignored),
          total=state['total_in_meeting'],
          groups=sorted(list(groups_found)) if groups_found else [],
-         mixed=mixed)
+         mixed=mixed,
+         absent=len(state.get('absent', [])))
     emit('rebuild',
          collected=[{'name':v['name'],'student_id':v.get('student_id',''),'group':v.get('group','')} for v in collected],
-         ignored=[{'name':v['name'],'reason':v.get('reason',''),'student_id':v.get('student_id',''),'group':v.get('group','')} for v in ignored])
+         ignored=[{'name':v['name'],'reason':v.get('reason',''),'student_id':v.get('student_id',''),'group':v.get('group','')} for v in ignored],
+         absent=[{'name':v['name'],'student_id':v.get('student_id','')} for v in state.get('absent', [])])
 
 def get_desktop():
     home = os.path.expanduser("~")
@@ -340,6 +449,7 @@ def get_desktop():
 def save_excel(filepath):
     with lock:
         collected = list(state['collected'])
+        absent = list(state.get('absent', []))
     with_id = [v for v in collected if v['student_id']]
     without_id = [v for v in collected if not v['student_id']]
 
@@ -367,17 +477,35 @@ def save_excel(filepath):
         for v in without_id:
             ws.append([n, v['name'], '']); n += 1
             for c in ws[ws.max_row]: c.border = tb
+    if absent:
+        ws.append([])
+        ws.append([])
+        af = PatternFill(start_color="C00000", end_color="C00000", fill_type="solid")
+        afont = Font(bold=True, size=12, color="FFFFFF")
+        ws.append(['No', 'Name (Absent)', 'Student ID'])
+        for c in ws[ws.max_row]:
+            c.font = afont; c.fill = af; c.alignment = Alignment(horizontal='center'); c.border = tb
+        for i, v in enumerate(absent, 1):
+            ws.append([i, v['name'], v.get('student_id', '')])
+            for c in ws[ws.max_row]: c.border = tb; c.alignment = Alignment(horizontal='left')
     wb.save(filepath)
     return filepath
 
 def save_csv(filepath):
     with lock:
         collected = list(state['collected'])
+        absent = list(state.get('absent', []))
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         w = csv.writer(f)
         w.writerow(['No', 'Name', 'Student ID'])
         for i, v in enumerate(collected, 1):
             w.writerow([i, v['name'], v['student_id']])
+        if absent:
+            w.writerow([])
+            w.writerow(['--- ABSENT ---', '', ''])
+            w.writerow(['No', 'Name (Absent)', 'Student ID'])
+            for i, v in enumerate(absent, 1):
+                w.writerow([i, v['name'], v.get('student_id', '')])
     return filepath
 
 # ── PLAYWRIGHT AUTOMATION THREAD ─────────────────────────────────────────────
@@ -950,6 +1078,24 @@ tr:hover td{background:var(--card-hover)}
       </div>
     </div>
     <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups, only your group is collected. Default: A.</p>
+
+    <!-- ROSTER TOGGLE -->
+    <div style="display:flex;align-items:center;gap:10px;margin-top:20px;text-align:left">
+      <label style="margin:0;cursor:pointer;flex-shrink:0" for="roster-toggle">Use Class Roster</label>
+      <label style="position:relative;width:40px;height:22px;margin:0;flex-shrink:0">
+        <input type="checkbox" id="roster-toggle" onchange="toggleRoster()" style="opacity:0;width:0;height:0">
+        <span style="position:absolute;inset:0;background:var(--border);border-radius:11px;cursor:pointer;transition:.2s"></span>
+        <span id="roster-knob" style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s"></span>
+      </label>
+      <span style="font-size:.72rem;color:var(--text3)">Match participants against an uploaded name list</span>
+    </div>
+    <div id="roster-box" style="display:none;margin-top:12px;text-align:left">
+      <p style="font-size:.72rem;color:var(--text3);margin-bottom:8px">Upload a file with student names (one per line). Accepted: .txt, .json, .md, .xlsx</p>
+      <input type="file" id="roster-file" accept=".txt,.json,.md,.xlsx" onchange="uploadRoster()" style="font-size:.82rem;color:var(--text2)">
+      <div id="roster-status" style="margin-top:8px;font-size:.8rem;display:none"></div>
+      <div id="roster-preview" style="margin-top:8px;max-height:150px;overflow-y:auto;font-size:.78rem;color:var(--text2);display:none;background:var(--bg2);border-radius:8px;padding:8px 12px"></div>
+    </div>
+
     <button class="btn-primary" id="btn-start" onclick="startTracking()">Start Tracking</button>
   </div>
   <p style="text-align:center;color:var(--text3);font-size:.72rem;margin-top:16px;letter-spacing:.02em">Created by Osman Mohammed (TheNooB)</p>
@@ -1009,6 +1155,18 @@ tr:hover td{background:var(--card-hover)}
   </div>
 </div>
 
+<!-- ABSENT (roster mode only) -->
+<div class="tables-grid" id="absent-section" style="display:none">
+  <div class="table-card" style="grid-column:1/-1">
+    <div class="table-header"><h2>Absent <span id="absent-count" style="color:var(--red);font-weight:400"></span></h2></div>
+    <div class="table-search"><input id="search-absent" placeholder="Search absent..."></div>
+    <div class="table-scroll">
+      <table><thead><tr><th>Name</th><th>Student ID</th></tr></thead>
+      <tbody id="tbody-absent"></tbody></table>
+    </div>
+  </div>
+</div>
+
 <!-- LOG -->
 <div class="log-card">
   <div class="table-header"><h2>Activity</h2></div>
@@ -1041,7 +1199,59 @@ tr:hover td{background:var(--card-hover)}
 
 <script>
 let timerInterval, startTime;
-let collectedRows = [], ignoredRows = [];
+let collectedRows = [], ignoredRows = [], absentRows = [];
+let rosterMode = false;
+
+function toggleRoster() {
+  const cb = document.getElementById('roster-toggle');
+  const box = document.getElementById('roster-box');
+  const knob = document.getElementById('roster-knob');
+  const grpInput = document.getElementById('inp-group');
+  if (cb.checked) {
+    box.style.display = 'block';
+    knob.style.left = '20px'; knob.style.background = 'var(--green)';
+    if (grpInput) { grpInput.disabled = true; grpInput.style.opacity = '0.4'; }
+  } else {
+    box.style.display = 'none';
+    knob.style.left = '2px'; knob.style.background = 'var(--text3)';
+    if (grpInput) { grpInput.disabled = false; grpInput.style.opacity = '1'; }
+    document.getElementById('roster-status').textContent = '';
+    document.getElementById('roster-preview').innerHTML = '';
+    fetch('/clear-roster', {method:'POST'});
+    rosterMode = false;
+  }
+}
+
+function uploadRoster() {
+  const inp = document.getElementById('roster-file');
+  const statusEl = document.getElementById('roster-status');
+  const previewEl = document.getElementById('roster-preview');
+  if (!inp.files || !inp.files[0]) return;
+  statusEl.textContent = 'Uploading...';
+  statusEl.style.color = 'var(--text2)';
+  previewEl.innerHTML = '';
+  const fd = new FormData();
+  fd.append('file', inp.files[0]);
+  fetch('/upload-roster', {method:'POST', body: fd})
+  .then(r => r.json()).then(d => {
+    if (d.ok) {
+      rosterMode = true;
+      statusEl.textContent = d.count + ' students loaded';
+      statusEl.style.color = 'var(--green)';
+      let html = '<div style="max-height:120px;overflow-y:auto;margin-top:6px;font-size:.78rem;color:var(--text2)">';
+      (d.names || []).forEach((n, i) => {
+        html += '<div style="padding:2px 0;border-bottom:1px solid var(--border)">' +
+          (i+1) + '. ' + esc(n.name) + (n.student_id ? ' <span style="color:var(--accent)">[' + esc(n.student_id) + ']</span>' : '') + '</div>';
+      });
+      html += '</div>';
+      previewEl.innerHTML = html;
+    } else {
+      statusEl.textContent = d.error || 'Upload failed';
+      statusEl.style.color = 'var(--red)';
+      rosterMode = false;
+    }
+  }).catch(() => { statusEl.textContent = 'Network error'; statusEl.style.color = 'var(--red)'; });
+}
 
 function startTracking() {
   const url = document.getElementById('inp-url').value.trim();
@@ -1135,6 +1345,9 @@ function handleEvent(d) {
     document.getElementById('sv-groups').textContent = d.groups && d.groups.length ? d.groups.join(', ') : '-';
     document.getElementById('tc-collected').textContent = d.collected || 0;
     document.getElementById('tc-ignored').textContent = d.ignored || 0;
+    if (typeof d.absent === 'number' && d.absent > 0) {
+      document.getElementById('absent-count').textContent = '(' + d.absent + ')';
+    }
   }
 
   if (d.type === 'name') {
@@ -1162,7 +1375,7 @@ function handleEvent(d) {
   }
 
   if (d.type === 'rebuild') {
-    rebuildTables(d.collected || [], d.ignored || []);
+    rebuildTables(d.collected || [], d.ignored || [], d.absent || []);
   }
 
   if (d.type === 'log') {
@@ -1266,10 +1479,17 @@ document.getElementById('search-ignored').addEventListener('input', function(e){
     r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
 });
+document.getElementById('search-absent').addEventListener('input', function(e){
+  const q = e.target.value.toLowerCase();
+  document.querySelectorAll('#tbody-absent tr').forEach(r=>{
+    r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+});
 
-function rebuildTables(coll, ign) {
+function rebuildTables(coll, ign, abs) {
   collectedRows = coll;
   ignoredRows = ign;
+  absentRows = abs || [];
   const tc = document.getElementById('tbody-collected');
   tc.innerHTML = '';
   coll.forEach((d, i) => {
@@ -1286,15 +1506,38 @@ function rebuildTables(coll, ign) {
   });
   document.getElementById('tc-collected').textContent = coll.length;
   document.getElementById('tc-ignored').textContent = ign.length;
+  const abSec = document.getElementById('absent-section');
+  const ta = document.getElementById('tbody-absent');
+  if (absentRows.length > 0) {
+    abSec.style.display = '';
+    ta.innerHTML = '';
+    absentRows.forEach(d => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${esc(d.name)}</td><td>${d.student_id ? esc(d.student_id) : '-'}</td>`;
+      ta.appendChild(tr);
+    });
+    document.getElementById('absent-count').textContent = '(' + absentRows.length + ')';
+  } else {
+    abSec.style.display = 'none';
+    ta.innerHTML = '';
+    document.getElementById('absent-count').textContent = '';
+  }
 }
 
 // Restore state on page load / refresh
 fetch('/state').then(r=>r.json()).then(d=>{
+  if (d.roster_mode) {
+    rosterMode = true;
+    const cb = document.getElementById('roster-toggle');
+    if (cb) { cb.checked = true; toggleRoster(); }
+    const statusEl = document.getElementById('roster-status');
+    if (statusEl && d.roster_count) { statusEl.textContent = d.roster_count + ' students loaded'; statusEl.style.color = 'var(--green)'; }
+  }
   if (d.phase && d.phase !== 'idle') {
     document.getElementById('landing').style.display='none';
     document.getElementById('dashboard').style.display='block';
     document.getElementById('steps-panel').style.display='none';
-    rebuildTables(d.collected || [], d.ignored || []);
+    rebuildTables(d.collected || [], d.ignored || [], d.absent || []);
     document.getElementById('sv-total').textContent = d.total || 0;
     document.getElementById('sv-collected').textContent = (d.collected||[]).length;
     document.getElementById('sv-ignored').textContent = (d.ignored||[]).length;
@@ -1364,6 +1607,36 @@ def stream():
                     headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
 
+@app.route('/upload-roster', methods=['POST'])
+def upload_roster():
+    global roster, roster_mode
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify(ok=False, error='No file')
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ('.txt', '.json', '.md', '.xlsx'):
+        return jsonify(ok=False, error='Unsupported format. Use .txt, .json, .md, or .xlsx')
+    try:
+        raw = f.read()
+        content = raw if ext == '.xlsx' else raw.decode('utf-8', errors='ignore')
+        entries = parse_roster(content, f.filename)
+        if not entries:
+            return jsonify(ok=False, error='No names found in file')
+        roster = entries
+        roster_mode = True
+        return jsonify(ok=True, count=len(entries),
+                       names=[{'name': e['name'], 'student_id': e.get('student_id', '')} for e in entries])
+    except Exception as e:
+        return jsonify(ok=False, error=str(e))
+
+@app.route('/clear-roster', methods=['POST'])
+def clear_roster():
+    global roster, roster_mode
+    roster = []
+    roster_mode = False
+    state['absent'] = []
+    return jsonify(ok=True)
+
 @app.route('/start', methods=['POST'])
 def start():
     global MY_GROUP
@@ -1432,14 +1705,18 @@ def get_state():
     c = state.get('collected', [])
     ig = state.get('ignored', [])
     mixed_val = bool(len(groups_found) > 1 or (groups_found and groups_found != {MY_GROUP}))
+    ab = state.get('absent', [])
     return jsonify(
         phase=state.get('phase', 'idle'),
         total=state.get('total_in_meeting', 0),
         collected=[{'name':v['name'],'student_id':v.get('student_id',''),'group':v.get('group','')} for v in c],
         ignored=[{'name':v['name'],'reason':v.get('reason',''),'student_id':v.get('student_id',''),'group':v.get('group','')} for v in ig],
+        absent=[{'name':v['name'],'student_id':v.get('student_id','')} for v in ab],
         groups=sorted(list(groups_found)) if groups_found else [],
         mixed=mixed_val,
         my_group=MY_GROUP,
+        roster_mode=roster_mode,
+        roster_count=len(roster),
     )
 
 @app.route('/email', methods=['POST'])
