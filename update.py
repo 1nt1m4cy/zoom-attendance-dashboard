@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Zoom Attendance Harvester — Updater
+Attendance Companion — Updater
 Run this to pull the latest version from GitHub and reinstall dependencies.
 """
 import subprocess, sys, os
@@ -20,7 +20,7 @@ def run(cmd, cwd=None):
     return True
 
 def main():
-    print("\n=== Zoom Attendance Harvester — Update ===\n")
+    print("\n=== Attendance Companion — Update ===\n")
 
     # Check if we're inside a git repo
     is_git = os.path.isdir(os.path.join(SCRIPT_DIR, ".git"))
@@ -74,7 +74,7 @@ def main():
     print("\n[3/3] Ensuring Playwright browser is installed...")
     run([sys.executable, "-m", "playwright", "install", "chromium"])
 
-    print("\n=== Update complete. Run 'python harvester.py' to start. ===\n")
+    print("\n=== Update complete. Run 'python companion.py' to start. ===\n")
 
 if __name__ == "__main__":
     main()

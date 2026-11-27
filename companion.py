@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Attendance Harvester Dashboard
+Attendance Companion Dashboard
 Professional web dashboard for Zoom attendance collection.
 
 Credentials are loaded from environment variables or a .env file.
@@ -91,7 +91,7 @@ def send_attendance_email(recipient, filepath, filename):
     body = (
         f"Attendance report attached: {filename}.xlsx\n\n"
         f"Generated on {datetime.now().strftime('%Y-%m-%d at %H:%M')} "
-        f"by Attendance Harvester.\n"
+        f"by Attendance Companion.\n"
     )
     msg.attach(MIMEText(body, 'plain'))
 
@@ -284,12 +284,12 @@ def add_entry(raw_text):
             if reason:
                 emit('name', name=name, student_id=sid or '', group=grp or '',
                      status='ignored', reason=reason)
-                emit('log', text=f"soul captured but ignored -- {name} ({tag}) | reason: {reason}")
+                emit('log', text=f"ignored: {name} ({tag}) | reason: {reason}")
             else:
                 emit('name', name=name, student_id=sid or '', group=grp or '',
                      status='collected', reason='')
                 gtag = f" [Grp {grp}]" if grp else ""
-                emit('log', text=f"caught: {name} ({tag}){gtag}")
+                emit('log', text=f"collected: {name} ({tag}){gtag}")
 
             _rebuild_lists()
 
@@ -373,7 +373,7 @@ def save_excel(filepath):
 # ── PLAYWRIGHT AUTOMATION THREAD ─────────────────────────────────────────────
 def run_bot(meeting_url):
     emit('phase', phase='launching')
-    emit('log', text='booting up the shadow client...')
+    emit('log', text='launching browser session...')
 
     try:
         with sync_playwright() as p:
@@ -616,7 +616,7 @@ def run_bot(meeting_url):
             except: pass
 
             emit('phase', phase='collecting')
-            emit('log', text='harvesting names... sit back and watch.')
+            emit('log', text='tracking participants... collecting names.')
 
             # COLLECTION LOOP
             poll = 0
@@ -734,7 +734,7 @@ TEMPLATE = r'''<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Attendance Harvester</title>
+<title>Attendance Companion</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -925,7 +925,7 @@ tr:hover td{background:var(--card-hover)}
 <div id="landing">
 <div class="landing-wrap">
   <div class="landing-card">
-    <h1>Attendance Harvester</h1>
+    <h1>Attendance Companion</h1>
     <p class="sub">Drop the link, we handle the rest</p>
     <label>Meeting URL</label>
     <input id="inp-url" placeholder="https://us05web.zoom.us/j/..." autofocus>
@@ -940,8 +940,9 @@ tr:hover td{background:var(--card-hover)}
       </div>
     </div>
     <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups, only your group is collected. Default: A.</p>
-    <button class="btn-primary" id="btn-start" onclick="startHarvest()">Start Harvesting</button>
+    <button class="btn-primary" id="btn-start" onclick="startTracking()">Start Tracking</button>
   </div>
+  <p style="text-align:center;color:var(--text3);font-size:.72rem;margin-top:16px;letter-spacing:.02em">Created by Osman Mohammed (TheNooB)</p>
 </div>
 </div>
 
@@ -963,10 +964,10 @@ tr:hover td{background:var(--card-hover)}
 <!-- STEPS -->
 <div class="steps-panel" id="steps-panel">
   <div class="steps-list">
-    <div class="step-row" id="step-launch"><div class="step-icon pending" id="si-launch">1</div><span class="step-text">Booting shadow client</span></div>
+    <div class="step-row" id="step-launch"><div class="step-icon pending" id="si-launch">1</div><span class="step-text">Launching browser</span></div>
     <div class="step-row" id="step-login"><div class="step-icon pending" id="si-login">2</div><span class="step-text">Slipping through the front door</span></div>
     <div class="step-row" id="step-join"><div class="step-icon pending" id="si-join">3</div><span class="step-text">Pulling up to the lecture</span></div>
-    <div class="step-row" id="step-collect"><div class="step-icon pending" id="si-collect">4</div><span class="step-text">Harvesting names</span></div>
+    <div class="step-row" id="step-collect"><div class="step-icon pending" id="si-collect">4</div><span class="step-text">Collecting names</span></div>
   </div>
 </div>
 
@@ -1031,7 +1032,7 @@ tr:hover td{background:var(--card-hover)}
 let timerInterval, startTime;
 let collectedRows = [], ignoredRows = [];
 
-function startHarvest() {
+function startTracking() {
   const url = document.getElementById('inp-url').value.trim();
   const fname = document.getElementById('inp-file').value.trim();
   const grp = document.getElementById('inp-group').value.trim().toUpperCase() || 'A';
@@ -1300,7 +1301,7 @@ document.getElementById('inp-url').addEventListener('keydown', function(e){
   if(e.key==='Enter') document.getElementById('inp-file').focus();
 });
 document.getElementById('inp-file').addEventListener('keydown', function(e){
-  if(e.key==='Enter') startHarvest();
+  if(e.key==='Enter') startTracking();
 });
 
 // Generate scan bars
@@ -1326,6 +1327,7 @@ function triggerScan(){
   }, 3500);
 }
 </script>
+<footer style="text-align:center;padding:24px 0 16px;color:var(--text3);font-size:.72rem;letter-spacing:.02em">Created by Osman Mohammed (TheNooB)</footer>
 </body>
 </html>'''
 
@@ -1444,7 +1446,7 @@ def find_port():
 if __name__ == '__main__':
     port = find_port()
     url = f'http://127.0.0.1:{port}'
-    print(f"\n  Attendance Harvester Dashboard")
+    print(f"\n  Attendance Companion Dashboard")
     print(f"  Open: {url}\n")
     threading.Timer(1.5, lambda: webbrowser.open(url)).start()
     app.run(host='127.0.0.1', port=port, debug=False, threaded=True)
