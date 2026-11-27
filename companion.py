@@ -35,7 +35,10 @@ BOT_NAME = os.environ.get('BOT_NAME', 'Attendance Bot')
 _ZOOM_DOMAIN = 'zoom.us'
 
 def _load_creds():
-    """Load credentials once, return (email, password). Exits if missing."""
+    """Load credentials once, return (email, password). Raises if missing so
+    callers inside a background thread can surface the error in the UI instead
+    of it being silently swallowed (sys.exit in a non-main thread just kills
+    that thread with no traceback and no 'error' phase is ever emitted)."""
     e = os.environ.get('ZOOM_EMAIL', '')
     p = os.environ.get('ZOOM_PASSWORD', '')
     if not e or not p:
@@ -44,7 +47,10 @@ def _load_creds():
         print("    export ZOOM_EMAIL='you@example.com'")
         print("    export ZOOM_PASSWORD='your_password'\n")
         print("  Or create a .env file -- see .env.example\n")
-        sys.exit(1)
+        raise RuntimeError(
+            "Zoom credentials not found. Set ZOOM_EMAIL and ZOOM_PASSWORD "
+            "(environment variables or a .env file next to companion.py)."
+        )
     return e, p
 
 def _secure_fill(page, selector, value):
@@ -1872,6 +1878,10 @@ def start():
         return jsonify(ok=False, error='No URL')
     if _bot_thread is not None and _bot_thread.is_alive():
         return jsonify(ok=False, error='A session is already running. Stop it first.')
+    if not (os.environ.get('ZOOM_EMAIL') and os.environ.get('ZOOM_PASSWORD')):
+        return jsonify(ok=False, error=(
+            'Zoom credentials not found. Set ZOOM_EMAIL and ZOOM_PASSWORD '
+            '(environment variables or a .env file) and restart the app.'))
     if not fname:
         fname = f"attendance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     fname = re.sub(r'\.xlsx$', '', fname, flags=re.IGNORECASE)
