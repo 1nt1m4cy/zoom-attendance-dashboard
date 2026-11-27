@@ -218,6 +218,29 @@ def extract_group(text):
         return m2.group(1).upper()
     return None
 
+_AVATAR_INITIALS_RE = re.compile(r"^\s*([A-Za-z]{1,3})\s*([A-Z][a-z].*)$")
+
+def _strip_avatar_initials(text):
+    """Zoom sometimes prefixes a participant's captured name with their
+    avatar-circle initials (e.g. "KK Kofi Kwame" for Kofi Kwame, with or
+    without a space, in any case). Strip that prefix only when it actually
+    matches the initials derived from the name that follows, so unrelated
+    leading letters (e.g. a real first name "Kofi") are left untouched."""
+    m = _AVATAR_INITIALS_RE.match(text)
+    if not m:
+        return text
+    prefix, rest = m.group(1), m.group(2)
+    words = rest.split()
+    if len(words) >= 2:
+        expected = words[0][0] + words[-1][0]
+    elif len(words) == 1:
+        expected = words[0][:2]
+    else:
+        return text
+    if prefix.lower() == expected.lower():
+        return rest
+    return text
+
 def clean_name(text):
     text = re.sub(r'[_(\-/|,\s]*\d{7,13}[_)\-/|,\s]*', ' ', text)
     text = re.sub(r'(?:^|[\s(\-_])[Gg](?:roup|rp|r|p)?\s*[A-Za-z]\b', '', text, flags=re.IGNORECASE)
@@ -228,7 +251,7 @@ def clean_name(text):
     text = _TRAILING_GROUP_RE.sub('', text)
     text = re.sub(r"[\d_]|[^\w\s'\-]", '', text)
     text = text.strip(' -')
-    text = re.sub(r'^([A-Z]{1,3})\s+(?=[A-Z][a-z])', '', text)
+    text = _strip_avatar_initials(text)
     return ' '.join(text.split())
 
 def normalize(name):
