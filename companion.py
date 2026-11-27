@@ -172,6 +172,7 @@ MY_GROUP = 'A'
 
 roster = []
 roster_mode = False
+roster_filename = ''
 
 state = {
     'phase': 'idle',
@@ -1080,20 +1081,36 @@ tr:hover td{background:var(--card-hover)}
     <p style="font-size:.72rem;color:var(--text3);margin-top:6px;text-align:left">If your class shares a meeting with other groups, only your group is collected. Default: A.</p>
 
     <!-- ROSTER TOGGLE -->
-    <div style="display:flex;align-items:center;gap:10px;margin-top:20px;text-align:left">
-      <label style="margin:0;cursor:pointer;flex-shrink:0" for="roster-toggle">Use Class Roster</label>
-      <label style="position:relative;width:40px;height:22px;margin:0;flex-shrink:0">
-        <input type="checkbox" id="roster-toggle" onchange="toggleRoster()" style="opacity:0;width:0;height:0">
-        <span style="position:absolute;inset:0;background:var(--border);border-radius:11px;cursor:pointer;transition:.2s"></span>
-        <span id="roster-knob" style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s"></span>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:24px;text-align:left">
+      <label style="position:relative;width:44px;height:24px;margin:0;flex-shrink:0;cursor:pointer">
+        <input type="checkbox" id="roster-toggle" onchange="toggleRoster()" style="opacity:0;width:0;height:0;position:absolute">
+        <span style="position:absolute;inset:0;background:var(--border);border-radius:12px;transition:.25s"></span>
+        <span id="roster-knob" style="position:absolute;top:3px;left:3px;width:18px;height:18px;background:var(--text3);border-radius:50%;transition:.25s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></span>
       </label>
-      <span style="font-size:.72rem;color:var(--text3)">Match participants against an uploaded name list</span>
+      <div style="flex:1">
+        <label style="margin:0;cursor:pointer;font-size:.88rem;font-weight:500;color:var(--text1)" for="roster-toggle">Use Class Roster</label>
+        <div style="font-size:.7rem;color:var(--text3);margin-top:1px">Match participants against an uploaded name list</div>
+      </div>
     </div>
-    <div id="roster-box" style="display:none;margin-top:12px;text-align:left">
-      <p style="font-size:.72rem;color:var(--text3);margin-bottom:8px">Upload a file with student names (one per line). Accepted: .txt, .json, .md, .xlsx</p>
-      <input type="file" id="roster-file" accept=".txt,.json,.md,.xlsx" onchange="uploadRoster()" style="font-size:.82rem;color:var(--text2)">
-      <div id="roster-status" style="margin-top:8px;font-size:.8rem;display:none"></div>
-      <div id="roster-preview" style="margin-top:8px;max-height:150px;overflow-y:auto;font-size:.78rem;color:var(--text2);display:none;background:var(--bg2);border-radius:8px;padding:8px 12px"></div>
+    <div id="roster-box" style="display:none;margin-top:14px;text-align:left">
+      <div id="roster-dropzone" onclick="document.getElementById('roster-file').click()"
+           ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(99,102,241,.06)'"
+           ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
+           ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';handleRosterDrop(event)"
+           style="border:2px dashed var(--border);border-radius:10px;padding:20px 16px;text-align:center;cursor:pointer;transition:border-color .2s, background .2s">
+        <div id="roster-drop-icon" style="font-size:1.6rem;margin-bottom:6px;opacity:.5">&#128196;</div>
+        <div id="roster-drop-label" style="font-size:.82rem;color:var(--text2);font-weight:500">Click to upload or drag and drop</div>
+        <div style="font-size:.68rem;color:var(--text3);margin-top:4px">.txt, .json, .md, .xlsx</div>
+      </div>
+      <input type="file" id="roster-file" accept=".txt,.json,.md,.xlsx" onchange="uploadRoster()" style="display:none">
+      <div id="roster-status" style="margin-top:10px;font-size:.8rem;display:none"></div>
+      <div id="roster-preview" style="margin-top:8px;display:none;background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <div id="roster-preview-header" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);background:rgba(99,102,241,.06)">
+          <span id="roster-file-label" style="font-size:.78rem;font-weight:500;color:var(--text1)"></span>
+          <span id="roster-file-count" style="font-size:.72rem;color:var(--accent);font-weight:600"></span>
+        </div>
+        <div id="roster-preview-list" style="max-height:130px;overflow-y:auto;padding:4px 0"></div>
+      </div>
     </div>
 
     <button class="btn-primary" id="btn-start" onclick="startTracking()">Start Tracking</button>
@@ -1133,6 +1150,19 @@ tr:hover td{background:var(--card-hover)}
   <div class="stat-card"><div class="stat-val green" id="sv-collected">0</div><div class="stat-label">Collected</div></div>
   <div class="stat-card"><div class="stat-val red" id="sv-ignored">0</div><div class="stat-label">Ignored</div></div>
   <div class="stat-card"><div class="stat-val amber" id="sv-groups">-</div><div class="stat-label">Groups</div></div>
+</div>
+
+<!-- ROSTER BANNER (shown when roster mode active) -->
+<div id="dash-roster-banner" style="display:none;margin-bottom:16px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(99,102,241,.05)">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:1rem;opacity:.6">&#128196;</span>
+      <span style="font-size:.82rem;font-weight:600;color:var(--text1)">Using roster:</span>
+      <span id="dash-roster-fname" style="font-size:.82rem;color:var(--accent);font-weight:500"></span>
+    </div>
+    <span id="dash-roster-count" style="font-size:.72rem;color:var(--text2);background:var(--bg1);padding:2px 10px;border-radius:10px;font-weight:600"></span>
+  </div>
+  <div id="dash-roster-list" style="max-height:140px;overflow-y:auto;padding:4px 0"></div>
 </div>
 
 <!-- TABLES -->
@@ -1202,6 +1232,8 @@ let timerInterval, startTime;
 let collectedRows = [], ignoredRows = [], absentRows = [];
 let rosterMode = false;
 
+let rosterFilename = '';
+
 function toggleRoster() {
   const cb = document.getElementById('roster-toggle');
   const box = document.getElementById('roster-box');
@@ -1209,42 +1241,76 @@ function toggleRoster() {
   const grpInput = document.getElementById('inp-group');
   if (cb.checked) {
     box.style.display = 'block';
-    knob.style.left = '20px'; knob.style.background = 'var(--green)';
+    knob.style.left = '23px'; knob.style.background = 'var(--green)';
     if (grpInput) { grpInput.disabled = true; grpInput.style.opacity = '0.4'; }
   } else {
     box.style.display = 'none';
-    knob.style.left = '2px'; knob.style.background = 'var(--text3)';
+    knob.style.left = '3px'; knob.style.background = 'var(--text3)';
     if (grpInput) { grpInput.disabled = false; grpInput.style.opacity = '1'; }
-    document.getElementById('roster-status').textContent = '';
-    document.getElementById('roster-preview').innerHTML = '';
+    resetRosterUI();
     fetch('/clear-roster', {method:'POST'});
     rosterMode = false;
+    rosterFilename = '';
+    const banner = document.getElementById('dash-roster-banner');
+    if (banner) banner.style.display = 'none';
   }
+}
+
+function resetRosterUI() {
+  const s = document.getElementById('roster-status');
+  const p = document.getElementById('roster-preview');
+  if (s) { s.style.display = 'none'; s.textContent = ''; }
+  if (p) p.style.display = 'none';
+  const dz = document.getElementById('roster-dropzone');
+  if (dz) dz.style.display = '';
+}
+
+function handleRosterDrop(e) {
+  const files = e.dataTransfer.files;
+  if (files && files.length) {
+    const inp = document.getElementById('roster-file');
+    inp.files = files;
+    uploadRoster();
+  }
+}
+
+function renderRosterPreview(names, filename, target) {
+  let html = '';
+  (names || []).forEach((n, i) => {
+    html += '<div style="display:flex;align-items:center;padding:4px 12px;font-size:.76rem;' +
+      (i % 2 === 0 ? 'background:transparent' : 'background:rgba(255,255,255,.02)') + '">' +
+      '<span style="color:var(--text3);width:28px;flex-shrink:0">' + (i+1) + '.</span>' +
+      '<span style="flex:1;color:var(--text1)">' + esc(n.name) + '</span>' +
+      (n.student_id ? '<span style="color:var(--accent);font-size:.72rem;font-weight:500">' + esc(n.student_id) + '</span>' : '<span style="color:var(--text3);font-size:.72rem">-</span>') +
+      '</div>';
+  });
+  target.innerHTML = html;
 }
 
 function uploadRoster() {
   const inp = document.getElementById('roster-file');
   const statusEl = document.getElementById('roster-status');
   const previewEl = document.getElementById('roster-preview');
+  const dropzone = document.getElementById('roster-dropzone');
   if (!inp.files || !inp.files[0]) return;
-  statusEl.textContent = 'Uploading...';
+  const fname = inp.files[0].name;
+  statusEl.style.display = 'block';
+  statusEl.textContent = 'Uploading ' + fname + '...';
   statusEl.style.color = 'var(--text2)';
-  previewEl.innerHTML = '';
+  previewEl.style.display = 'none';
   const fd = new FormData();
   fd.append('file', inp.files[0]);
   fetch('/upload-roster', {method:'POST', body: fd})
   .then(r => r.json()).then(d => {
     if (d.ok) {
       rosterMode = true;
-      statusEl.textContent = d.count + ' students loaded';
-      statusEl.style.color = 'var(--green)';
-      let html = '<div style="max-height:120px;overflow-y:auto;margin-top:6px;font-size:.78rem;color:var(--text2)">';
-      (d.names || []).forEach((n, i) => {
-        html += '<div style="padding:2px 0;border-bottom:1px solid var(--border)">' +
-          (i+1) + '. ' + esc(n.name) + (n.student_id ? ' <span style="color:var(--accent)">[' + esc(n.student_id) + ']</span>' : '') + '</div>';
-      });
-      html += '</div>';
-      previewEl.innerHTML = html;
+      rosterFilename = d.filename || fname;
+      statusEl.style.display = 'none';
+      dropzone.style.display = 'none';
+      previewEl.style.display = 'block';
+      document.getElementById('roster-file-label').textContent = rosterFilename;
+      document.getElementById('roster-file-count').textContent = d.count + ' students';
+      renderRosterPreview(d.names, rosterFilename, document.getElementById('roster-preview-list'));
     } else {
       statusEl.textContent = d.error || 'Upload failed';
       statusEl.style.color = 'var(--red)';
@@ -1273,6 +1339,11 @@ function startTracking() {
     if (d.ok) {
       document.getElementById('landing').style.display = 'none';
       document.getElementById('dashboard').style.display = 'block';
+      if (rosterMode && rosterFilename) {
+        fetch('/state').then(r2=>r2.json()).then(s=>{
+          showDashRosterBanner(s.roster_filename || rosterFilename, s.roster_names || []);
+        });
+      }
       startTimer();
       listenSSE();
     }
@@ -1524,14 +1595,33 @@ function rebuildTables(coll, ign, abs) {
   }
 }
 
+function showDashRosterBanner(fname, names) {
+  const banner = document.getElementById('dash-roster-banner');
+  if (!banner || !fname) return;
+  banner.style.display = 'block';
+  document.getElementById('dash-roster-fname').textContent = fname;
+  document.getElementById('dash-roster-count').textContent = (names||[]).length + ' students';
+  renderRosterPreview(names || [], fname, document.getElementById('dash-roster-list'));
+}
+
 // Restore state on page load / refresh
 fetch('/state').then(r=>r.json()).then(d=>{
   if (d.roster_mode) {
     rosterMode = true;
+    rosterFilename = d.roster_filename || '';
     const cb = document.getElementById('roster-toggle');
     if (cb) { cb.checked = true; toggleRoster(); }
-    const statusEl = document.getElementById('roster-status');
-    if (statusEl && d.roster_count) { statusEl.textContent = d.roster_count + ' students loaded'; statusEl.style.color = 'var(--green)'; }
+    if (d.roster_names && d.roster_names.length) {
+      const dz = document.getElementById('roster-dropzone');
+      const pv = document.getElementById('roster-preview');
+      if (dz) dz.style.display = 'none';
+      if (pv) {
+        pv.style.display = 'block';
+        document.getElementById('roster-file-label').textContent = rosterFilename;
+        document.getElementById('roster-file-count').textContent = d.roster_count + ' students';
+        renderRosterPreview(d.roster_names, rosterFilename, document.getElementById('roster-preview-list'));
+      }
+    }
   }
   if (d.phase && d.phase !== 'idle') {
     document.getElementById('landing').style.display='none';
@@ -1544,6 +1634,9 @@ fetch('/state').then(r=>r.json()).then(d=>{
     document.getElementById('sv-groups').textContent = d.groups && d.groups.length ? d.groups.join(', ') : '-';
     document.getElementById('tc-collected').textContent = (d.collected||[]).length;
     document.getElementById('tc-ignored').textContent = (d.ignored||[]).length;
+    if (d.roster_mode && d.roster_filename) {
+      showDashRosterBanner(d.roster_filename, d.roster_names || []);
+    }
     const pill = document.getElementById('status-pill');
     const ptxt = document.getElementById('status-text');
     if (d.phase==='done') { pill.className='status-pill done'; ptxt.textContent='Done'; document.getElementById('btn-save').disabled=false; document.getElementById('btn-stop').style.display='none'; }
@@ -1609,7 +1702,7 @@ def stream():
 
 @app.route('/upload-roster', methods=['POST'])
 def upload_roster():
-    global roster, roster_mode
+    global roster, roster_mode, roster_filename
     f = request.files.get('file')
     if not f or not f.filename:
         return jsonify(ok=False, error='No file')
@@ -1624,16 +1717,18 @@ def upload_roster():
             return jsonify(ok=False, error='No names found in file')
         roster = entries
         roster_mode = True
-        return jsonify(ok=True, count=len(entries),
+        roster_filename = f.filename
+        return jsonify(ok=True, count=len(entries), filename=f.filename,
                        names=[{'name': e['name'], 'student_id': e.get('student_id', '')} for e in entries])
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
 @app.route('/clear-roster', methods=['POST'])
 def clear_roster():
-    global roster, roster_mode
+    global roster, roster_mode, roster_filename
     roster = []
     roster_mode = False
+    roster_filename = ''
     state['absent'] = []
     return jsonify(ok=True)
 
@@ -1717,6 +1812,8 @@ def get_state():
         my_group=MY_GROUP,
         roster_mode=roster_mode,
         roster_count=len(roster),
+        roster_filename=roster_filename,
+        roster_names=[{'name': e['name'], 'student_id': e.get('student_id', '')} for e in roster] if roster else [],
     )
 
 @app.route('/email', methods=['POST'])
