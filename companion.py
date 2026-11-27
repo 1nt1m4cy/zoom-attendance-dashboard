@@ -7,7 +7,7 @@ Credentials are loaded from environment variables or a .env file.
 See .env.example for the required variables.
 """
 
-import re, time, signal, sys, os, platform, json, threading, queue, random, socket, webbrowser, gc
+import re, time, signal, sys, os, platform, json, threading, queue, random, socket, webbrowser, gc, csv
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -368,6 +368,16 @@ def save_excel(filepath):
             ws.append([n, v['name'], '']); n += 1
             for c in ws[ws.max_row]: c.border = tb
     wb.save(filepath)
+    return filepath
+
+def save_csv(filepath):
+    with lock:
+        collected = list(state['collected'])
+    with open(filepath, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['No', 'Name', 'Student ID'])
+        for i, v in enumerate(collected, 1):
+            w.writerow([i, v['name'], v['student_id']])
     return filepath
 
 # ── PLAYWRIGHT AUTOMATION THREAD ─────────────────────────────────────────────
@@ -1009,6 +1019,7 @@ tr:hover td{background:var(--card-hover)}
 <div class="actions-bar">
   <button class="btn-stop" id="btn-stop" onclick="stopCollection()">Stop Collection</button>
   <button class="btn-save" id="btn-save" onclick="saveExport()" disabled>Save &amp; Export</button>
+  <button class="btn-stop" id="btn-csv" onclick="downloadCSV()" style="display:none;border-color:var(--accent);color:var(--accent)">Download CSV</button>
   <button class="btn-email" id="btn-email" onclick="openEmailModal()" disabled style="display:none">Email Attendance</button>
 </div>
 
@@ -1191,6 +1202,7 @@ function saveExport() {
     if(d.ok){
       showToast('Saved to '+d.path,'success');
       window.location.href='/download';
+      document.getElementById('btn-csv').style.display='inline-block';
       setTimeout(()=>{btn.textContent='Saved!';},500);
       setTimeout(()=>{btn.textContent='Save & Export';btn.disabled=false;},3000);
       fetch('/smtp-status').then(r=>r.json()).then(s=>{
@@ -1205,6 +1217,8 @@ function saveExport() {
     }
   });
 }
+
+function downloadCSV(){window.location.href='/download-csv';}
 
 function openEmailModal(){document.getElementById('email-modal').classList.add('active');document.getElementById('email-to').focus();}
 function closeEmailModal(){document.getElementById('email-modal').classList.remove('active');}
@@ -1383,16 +1397,20 @@ def stop():
 
 
 _saved_path = [None]
+_saved_csv = [None]
 
 @app.route('/save', methods=['POST'])
 def save():
     fname = state.get('filename', 'attendance')
     desktop = get_desktop()
-    path = os.path.join(desktop, fname + '.xlsx')
+    xlsx_path = os.path.join(desktop, fname + '.xlsx')
+    csv_path = os.path.join(desktop, fname + '.csv')
     try:
-        save_excel(path)
-        _saved_path[0] = path
-        return jsonify(ok=True, path=path)
+        save_excel(xlsx_path)
+        save_csv(csv_path)
+        _saved_path[0] = xlsx_path
+        _saved_csv[0] = csv_path
+        return jsonify(ok=True, path=xlsx_path)
     except Exception as e:
         return jsonify(ok=False, error=str(e))
 
@@ -1401,6 +1419,12 @@ def save():
 def download():
     if _saved_path[0] and os.path.isfile(_saved_path[0]):
         return send_file(_saved_path[0], as_attachment=True)
+    return "No file", 404
+
+@app.route('/download-csv')
+def download_csv():
+    if _saved_csv[0] and os.path.isfile(_saved_csv[0]):
+        return send_file(_saved_csv[0], as_attachment=True)
     return "No file", 404
 
 @app.route('/state')
