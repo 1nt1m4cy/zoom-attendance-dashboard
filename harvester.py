@@ -8,6 +8,11 @@ See .env.example for the required variables.
 """
 
 import re, time, signal, sys, os, platform, json, threading, queue, random, socket, webbrowser, gc
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime
 
 for pkg, mod in [('flask','flask'),('openpyxl','openpyxl'),('playwright','playwright.sync_api'),('python-dotenv','dotenv')]:
@@ -65,6 +70,48 @@ def _wipe(varname_holder):
             varname_holder.clear()
     except: pass
     gc.collect()
+
+def _load_smtp():
+    """Load SMTP credentials from environment. Returns (email, password) or (None, None)."""
+    e = os.environ.get('SMTP_EMAIL', '')
+    p = os.environ.get('SMTP_PASSWORD', '')
+    return (e, p) if e and p else (None, None)
+
+def send_attendance_email(recipient, filepath, filename):
+    """Send the attendance Excel file as an email attachment."""
+    smtp_email, smtp_pass = _load_smtp()
+    if not smtp_email or not smtp_pass:
+        return False, "SMTP credentials not configured. Set SMTP_EMAIL and SMTP_PASSWORD."
+
+    msg = MIMEMultipart()
+    msg['From'] = smtp_email
+    msg['To'] = recipient
+    msg['Subject'] = f"Attendance Report - {filename}"
+
+    body = (
+        f"Attendance report attached: {filename}.xlsx\n\n"
+        f"Generated on {datetime.now().strftime('%Y-%m-%d at %H:%M')} "
+        f"by Attendance Harvester.\n"
+    )
+    msg.attach(MIMEText(body, 'plain'))
+
+    with open(filepath, 'rb') as f:
+        part = MIMEBase('application', 'vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        part.set_payload(f.read())
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', f'attachment; filename="{filename}.xlsx"')
+    msg.attach(part)
+
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as s:
+            s.starttls()
+            s.login(smtp_email, smtp_pass)
+            s.send_message(msg)
+        return True, "Sent"
+    except smtplib.SMTPAuthenticationError:
+        return False, "SMTP authentication failed. Check SMTP_EMAIL and SMTP_PASSWORD."
+    except Exception as ex:
+        return False, str(ex)
 
 # ── NOISE FILTERS ────────────────────────────────────────────────────────────
 NOISE_WORDS = [
@@ -791,6 +838,21 @@ tr:hover td{background:var(--card-hover)}
 .btn-save{padding:10px 28px;background:var(--green);color:#0b0d13;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:700;cursor:pointer;transition:all .2s}
 .btn-save:hover{background:#25bf8e}
 .btn-save:disabled{opacity:.5;cursor:not-allowed}
+.btn-email{padding:10px 24px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-email:hover{background:var(--blue-bg)}.btn-email:disabled{opacity:.5;cursor:not-allowed}
+
+#email-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:9000;align-items:center;justify-content:center}
+#email-modal.active{display:flex}
+.email-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:36px 32px;width:100%;max-width:420px;text-align:center}
+.email-card h2{font-size:1.15rem;font-weight:700;margin-bottom:4px}
+.email-card .esub{color:var(--text2);font-size:.8rem;margin-bottom:22px}
+.email-card label{display:block;text-align:left;font-size:.72rem;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.email-card input{width:100%;padding:11px 14px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:.88rem;outline:none;transition:border .2s;margin-bottom:16px}
+.email-card input:focus{border-color:var(--accent)}
+.email-actions{display:flex;gap:10px;justify-content:flex-end}
+.email-actions .btn-cancel{padding:9px 20px;background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:var(--radius-sm);font-size:.85rem;cursor:pointer}
+.email-actions .btn-send{padding:9px 24px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius-sm);font-size:.85rem;font-weight:600;cursor:pointer}
+.email-actions .btn-send:disabled{opacity:.5;cursor:not-allowed}
 
 /* SCAN OVERLAY */
 #scan-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:#000;z-index:10000;display:none;align-items:center;justify-content:center;flex-direction:column;overflow:hidden}
@@ -924,9 +986,24 @@ tr:hover td{background:var(--card-hover)}
 <div class="actions-bar">
   <button class="btn-stop" id="btn-stop" onclick="stopCollection()">Stop Collection</button>
   <button class="btn-save" id="btn-save" onclick="saveExport()" disabled>Save &amp; Export</button>
+  <button class="btn-email" id="btn-email" onclick="openEmailModal()" disabled style="display:none">Email Attendance</button>
 </div>
 
 </div></div>
+
+<!-- EMAIL MODAL -->
+<div id="email-modal">
+  <div class="email-card">
+    <h2>Send Attendance via Email</h2>
+    <p class="esub">The saved attendance file will be sent as an attachment.</p>
+    <label>Recipient Email</label>
+    <input id="email-to" type="email" placeholder="lecturer@university.edu">
+    <div class="email-actions">
+      <button class="btn-cancel" onclick="closeEmailModal()">Cancel</button>
+      <button class="btn-send" id="btn-send-email" onclick="sendEmail()">Send</button>
+    </div>
+  </div>
+</div>
 
 <script>
 let timerInterval, startTime;
@@ -1081,12 +1158,43 @@ function saveExport() {
       window.location.href='/download';
       setTimeout(()=>{btn.textContent='Saved!';},500);
       setTimeout(()=>{btn.textContent='Save & Export';btn.disabled=false;},3000);
+      // Show email button if SMTP is configured
+      fetch('/smtp-status').then(r=>r.json()).then(s=>{
+        if(s.configured){
+          const eb=document.getElementById('btn-email');
+          eb.style.display='inline-block';eb.disabled=false;
+        }
+      });
     } else {
       showToast(d.error||'Save failed','error');
       btn.textContent='Save & Export';btn.disabled=false;
     }
   });
 }
+
+function openEmailModal(){document.getElementById('email-modal').classList.add('active');document.getElementById('email-to').focus();}
+function closeEmailModal(){document.getElementById('email-modal').classList.remove('active');}
+
+function sendEmail(){
+  const to=document.getElementById('email-to').value.trim();
+  if(!to||!to.includes('@')){document.getElementById('email-to').style.borderColor='var(--red)';return;}
+  const btn=document.getElementById('btn-send-email');
+  btn.disabled=true;btn.textContent='Sending...';
+  fetch('/email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:to})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){
+      showToast('Email sent to '+to,'success');
+      closeEmailModal();
+      btn.textContent='Send';btn.disabled=false;
+    } else {
+      showToast(d.error||'Send failed','error');
+      btn.textContent='Send';btn.disabled=false;
+    }
+  }).catch(()=>{showToast('Network error','error');btn.textContent='Send';btn.disabled=false;});
+}
+
+document.getElementById('email-to').addEventListener('keydown',function(e){if(e.key==='Enter')sendEmail();});
+document.getElementById('email-modal').addEventListener('click',function(e){if(e.target===this)closeEmailModal();});
 
 function showToast(msg, type) {
   const t = document.createElement('div');
@@ -1266,6 +1374,23 @@ def get_state():
         groups=sorted(list(groups_found)) if groups_found else [],
         mixed=mixed_val,
     )
+
+@app.route('/email', methods=['POST'])
+def email_attendance():
+    data = request.json
+    recipient = (data.get('to', '') or '').strip()
+    if not recipient or '@' not in recipient:
+        return jsonify(ok=False, error='Enter a valid email address.')
+    if not _saved_path[0] or not os.path.isfile(_saved_path[0]):
+        return jsonify(ok=False, error='Save attendance first before sending.')
+    fname = state.get('filename', 'attendance')
+    ok, msg = send_attendance_email(recipient, _saved_path[0], fname)
+    return jsonify(ok=ok, message=msg if ok else None, error=msg if not ok else None)
+
+@app.route('/smtp-status')
+def smtp_status():
+    e, p = _load_smtp()
+    return jsonify(configured=bool(e and p))
 
 
 # ── MAIN ─────────────────────────────────────────────────────────────────────
