@@ -189,12 +189,19 @@ def extract_id(text):
     m = re.search(r'[\s_(\-/|,]*(\d{7,13})[\s_)\-/|,]*', text)
     return m.group(1) if m else None
 
+# A lone trailing letter set off by a space, dash, underscore, comma or
+# parenthesis denotes a group tag, regardless of whether the student ID sits
+# right before the name ("1234567890 John Doe B") or after it
+# ("John Doe B 1234567890"), and regardless of the separator style used
+# ("1234567890 - John Doe - A", "1234567890-John Doe-A").
+_TRAILING_GROUP_RE = re.compile(r'[\s_\-(,]+([A-Za-z])\s*\)?\s*$')
+
 def extract_group(text):
     m = re.search(r'(?:^|[\s(\-_])[Gg](?:roup|rp|r|p)?\s*([A-Za-z])\b', text, re.IGNORECASE)
     if m:
         return m.group(1).upper()
-    m2 = re.search(r'\d{7,13}\s*\)?\s*([A-Za-z])\s*$', text)
-    if m2 and len(m2.group(1)) == 1:
+    m2 = _TRAILING_GROUP_RE.search(text)
+    if m2:
         return m2.group(1).upper()
     return None
 
@@ -205,7 +212,7 @@ def clean_name(text):
     text = re.sub(r'\(Host\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'has joined the meeting', '', text, flags=re.IGNORECASE)
     text = re.sub(r'has left the meeting', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\s+[A-Za-z]\s*$', '', text)
+    text = _TRAILING_GROUP_RE.sub('', text)
     text = re.sub(r"[\d_]|[^\w\s'\-]", '', text)
     text = text.strip(' -')
     text = re.sub(r'^([A-Z]{1,3})\s+(?=[A-Z][a-z])', '', text)
