@@ -34,13 +34,16 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 BOT_NAME = os.environ.get('BOT_NAME', 'Attendance Bot')
 _ZOOM_DOMAIN = 'zoom.us'
 
-def _load_creds():
-    """Load credentials once, return (email, password). Raises if missing so
-    callers inside a background thread can surface the error in the UI instead
-    of it being silently swallowed (sys.exit in a non-main thread just kills
-    that thread with no traceback and no 'error' phase is ever emitted)."""
-    e = os.environ.get('ZOOM_EMAIL', '')
-    p = os.environ.get('ZOOM_PASSWORD', '')
+def _load_creds(override_email=None, override_pw=None):
+    """Load credentials once, return (email, password). An email/password typed
+    into the dashboard for a single session takes priority; otherwise falls back
+    to ZOOM_EMAIL/ZOOM_PASSWORD (env var or .env file). Raises if neither is
+    available so callers inside a background thread can surface the error in
+    the UI instead of it being silently swallowed (sys.exit in a non-main
+    thread just kills that thread with no traceback and no 'error' phase is
+    ever emitted)."""
+    e = (override_email or os.environ.get('ZOOM_EMAIL', '')).strip()
+    p = override_pw or os.environ.get('ZOOM_PASSWORD', '')
     if not e or not p:
         print("\n  ERROR: Zoom credentials not found.")
         print("  Set them via environment variables or a .env file:\n")
@@ -633,7 +636,7 @@ def save_csv(filepath):
     return filepath
 
 # ── PLAYWRIGHT AUTOMATION THREAD ─────────────────────────────────────────────
-def run_bot(meeting_url):
+def run_bot(meeting_url, cred_email=None, cred_pw=None):
     emit('phase', phase='launching')
     emit('log', text='booting up the shadow client...')
 
@@ -686,7 +689,7 @@ def run_bot(meeting_url):
             # Password injected via JS setter (no keystroke events emitted) so it
             # cannot be captured by keystroke loggers, Playwright traces, screen
             # recordings in headful mode, or DevTools event listeners.
-            _cred_email, _cred_pw = _load_creds()
+            _cred_email, _cred_pw = _load_creds(cred_email, cred_pw)
             _pw_holder = [_cred_pw]
             del _cred_pw
 
@@ -1236,6 +1239,32 @@ tr:hover td{background:var(--card-hover)}
       </div>
     </div>
 
+    <!-- ZOOM LOGIN TOGGLE -->
+    <div style="display:flex;align-items:center;gap:10px;margin-top:20px;text-align:left">
+      <label style="position:relative;width:44px;height:24px;margin:0;flex-shrink:0;cursor:pointer">
+        <input type="checkbox" id="creds-toggle" onchange="toggleCreds()" style="opacity:0;width:0;height:0;position:absolute">
+        <span style="position:absolute;inset:0;background:var(--border);border-radius:12px;transition:.25s"></span>
+        <span id="creds-knob" style="position:absolute;top:3px;left:3px;width:18px;height:18px;background:var(--text3);border-radius:50%;transition:.25s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></span>
+      </label>
+      <div style="flex:1">
+        <label style="margin:0;cursor:pointer;font-size:.88rem;font-weight:500;color:var(--text1)" for="creds-toggle">Use a different Zoom login</label>
+        <div style="font-size:.7rem;color:var(--text3);margin-top:1px">Leave off to use the credentials already set up on this machine</div>
+      </div>
+    </div>
+    <div id="creds-box" style="display:none;margin-top:14px;text-align:left">
+      <label style="margin-top:0">Zoom Email</label>
+      <input id="inp-zoom-email" type="email" autocomplete="off" placeholder="you@example.com">
+      <label>Zoom Password</label>
+      <div style="position:relative">
+        <input id="inp-zoom-pw" type="password" autocomplete="off" placeholder="Password" style="padding-right:42px">
+        <button type="button" onclick="togglePwEye()" aria-label="Show password"
+                style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text3);padding:4px;display:flex">
+          <svg id="pw-eye-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <p style="font-size:.7rem;color:var(--text3);margin-top:6px">Used only for this session. Never stored or written to disk.</p>
+    </div>
+
     <button class="btn-primary" id="btn-start" onclick="startTracking()">Start Tracking</button>
   </div>
   <p style="text-align:center;color:var(--text3);font-size:.72rem;margin-top:16px;letter-spacing:.02em">Created by Osman Mohammed (TheNooB)</p>
@@ -1357,6 +1386,33 @@ let rosterMode = false;
 
 let rosterFilename = '';
 
+function toggleCreds() {
+  const cb = document.getElementById('creds-toggle');
+  const box = document.getElementById('creds-box');
+  const knob = document.getElementById('creds-knob');
+  if (cb.checked) {
+    box.style.display = 'block';
+    knob.style.left = '23px'; knob.style.background = 'var(--green)';
+  } else {
+    box.style.display = 'none';
+    knob.style.left = '3px'; knob.style.background = 'var(--text3)';
+    document.getElementById('inp-zoom-email').value = '';
+    document.getElementById('inp-zoom-pw').value = '';
+  }
+}
+
+function togglePwEye() {
+  const pw = document.getElementById('inp-zoom-pw');
+  const icon = document.getElementById('pw-eye-icon');
+  if (pw.type === 'password') {
+    pw.type = 'text';
+    icon.innerHTML = '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.6 21.6 0 0 1 5.17-6.17M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a21.6 21.6 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/>';
+  } else {
+    pw.type = 'password';
+    icon.innerHTML = '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/>';
+  }
+}
+
 function toggleRoster() {
   const cb = document.getElementById('roster-toggle');
   const box = document.getElementById('roster-box');
@@ -1446,7 +1502,14 @@ function startTracking() {
   const url = document.getElementById('inp-url').value.trim();
   const fname = document.getElementById('inp-file').value.trim();
   const grp = document.getElementById('inp-group').value.trim().toUpperCase() || 'A';
+  const useCreds = document.getElementById('creds-toggle').checked;
+  const zoomEmail = useCreds ? document.getElementById('inp-zoom-email').value.trim() : '';
+  const zoomPw = useCreds ? document.getElementById('inp-zoom-pw').value : '';
   if (!url) { document.getElementById('inp-url').style.borderColor='var(--red)'; return; }
+  if (useCreds && (!zoomEmail || !zoomPw)) {
+    showToast('Enter both the Zoom email and password, or turn off "Use a different Zoom login".', 'error');
+    return;
+  }
   const btn = document.getElementById('btn-start');
   btn.disabled = true;
   btn.textContent = 'Launching...';
@@ -1456,10 +1519,11 @@ function startTracking() {
   fetch('/start', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({url: url, filename: fname, group: grp})
+    body: JSON.stringify({url: url, filename: fname, group: grp, email: zoomEmail, password: zoomPw})
   }).then(r => r.json()).then(d => {
     btn.classList.remove('btn-loading');
     if (d.ok) {
+      document.getElementById('inp-zoom-pw').value = '';
       document.getElementById('landing').style.display = 'none';
       document.getElementById('dashboard').style.display = 'block';
       if (rosterMode && rosterFilename) {
@@ -1874,14 +1938,22 @@ def start():
     url = (data.get('url') or '').strip()
     fname = (data.get('filename') or '').strip()
     my_grp = (data.get('group') or '').strip().upper()
+    # Optional per-session Zoom login typed into the dashboard. Only ever kept
+    # as local variables for this request + the bot thread; never written to
+    # `state`, never logged, never echoed back to the client.
+    cred_email = (data.get('email') or '').strip()
+    cred_pw = data.get('password') or ''
     if not url:
         return jsonify(ok=False, error='No URL')
     if _bot_thread is not None and _bot_thread.is_alive():
         return jsonify(ok=False, error='A session is already running. Stop it first.')
-    if not (os.environ.get('ZOOM_EMAIL') and os.environ.get('ZOOM_PASSWORD')):
+    if cred_email and not cred_pw or cred_pw and not cred_email:
+        return jsonify(ok=False, error='Enter both the Zoom email and password, or leave both blank.')
+    if not cred_email and not (os.environ.get('ZOOM_EMAIL') and os.environ.get('ZOOM_PASSWORD')):
         return jsonify(ok=False, error=(
-            'Zoom credentials not found. Set ZOOM_EMAIL and ZOOM_PASSWORD '
-            '(environment variables or a .env file) and restart the app.'))
+            'Zoom credentials not found. Enter a Zoom login on the dashboard, '
+            'or set ZOOM_EMAIL and ZOOM_PASSWORD (environment variables or a '
+            '.env file) and restart the app.'))
     if not fname:
         fname = f"attendance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     fname = re.sub(r'\.xlsx$', '', fname, flags=re.IGNORECASE)
@@ -1902,7 +1974,7 @@ def start():
     state['stop'] = False
     state['phase'] = 'launching'
 
-    t = threading.Thread(target=run_bot, args=(url,), daemon=True)
+    t = threading.Thread(target=run_bot, args=(url, cred_email or None, cred_pw or None), daemon=True)
     _bot_thread = t
     t.start()
     return jsonify(ok=True)
