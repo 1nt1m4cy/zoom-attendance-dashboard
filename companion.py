@@ -284,12 +284,12 @@ def add_entry(raw_text):
             if reason:
                 emit('name', name=name, student_id=sid or '', group=grp or '',
                      status='ignored', reason=reason)
-                emit('log', text=f"ignored: {name} ({tag}) | reason: {reason}")
+                emit('log', text=f"soul captured but ignored -- {name} ({tag}) | reason: {reason}")
             else:
                 emit('name', name=name, student_id=sid or '', group=grp or '',
                      status='collected', reason='')
                 gtag = f" [Grp {grp}]" if grp else ""
-                emit('log', text=f"collected: {name} ({tag}){gtag}")
+                emit('log', text=f"caught: {name} ({tag}){gtag}")
 
             _rebuild_lists()
 
@@ -373,7 +373,7 @@ def save_excel(filepath):
 # ── PLAYWRIGHT AUTOMATION THREAD ─────────────────────────────────────────────
 def run_bot(meeting_url):
     emit('phase', phase='launching')
-    emit('log', text='launching browser session...')
+    emit('log', text='booting up the shadow client...')
 
     try:
         with sync_playwright() as p:
@@ -616,7 +616,7 @@ def run_bot(meeting_url):
             except: pass
 
             emit('phase', phase='collecting')
-            emit('log', text='tracking participants... collecting names.')
+            emit('log', text='harvesting names... sit back and watch.')
 
             # COLLECTION LOOP
             poll = 0
@@ -964,10 +964,10 @@ tr:hover td{background:var(--card-hover)}
 <!-- STEPS -->
 <div class="steps-panel" id="steps-panel">
   <div class="steps-list">
-    <div class="step-row" id="step-launch"><div class="step-icon pending" id="si-launch">1</div><span class="step-text">Launching browser</span></div>
+    <div class="step-row" id="step-launch"><div class="step-icon pending" id="si-launch">1</div><span class="step-text">Booting shadow client</span></div>
     <div class="step-row" id="step-login"><div class="step-icon pending" id="si-login">2</div><span class="step-text">Slipping through the front door</span></div>
     <div class="step-row" id="step-join"><div class="step-icon pending" id="si-join">3</div><span class="step-text">Pulling up to the lecture</span></div>
-    <div class="step-row" id="step-collect"><div class="step-icon pending" id="si-collect">4</div><span class="step-text">Collecting names</span></div>
+    <div class="step-row" id="step-collect"><div class="step-icon pending" id="si-collect">4</div><span class="step-text">Harvesting names</span></div>
   </div>
 </div>
 
